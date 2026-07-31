@@ -2,12 +2,16 @@
 
 # Benchmark de Madurez AI Agents — NLR Diagnostic
 
-**API de diagnóstico de liderazgo NLR: benchmark de madurez en 5 dimensiones, percentiles, rebalanceo dinámico y reportes PDF — para el reto de No Country sobre data centers modernos.**
+### API de diagnóstico de liderazgo NLR: benchmark de madurez en 5 dimensiones, percentiles, rebalanceo dinámico y reportes PDF — para el reto de No Country sobre data centers modernos.
 
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+[![Python 3.12](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Puppeteer](https://img.shields.io/badge/Puppeteer-40B5A4?style=for-the-badge&logo=puppeteer&logoColor=white)](https://pptr.dev)
+
+[![API docs](https://img.shields.io/badge/API_DOCS-/docs-22c55e?style=flat-square)](http://localhost:8000/docs)
+[![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)](LICENSE)
 
 </div>
 
