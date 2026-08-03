@@ -3,7 +3,7 @@ import base64
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.core.security import limiter
+from app.core.security import RATE_LIMIT, limiter
 from app.deps import get_db, get_pdf_client
 from app.models.schemas import ReportPdfRequest, ReportPdfResponse
 from app.services import benchmark_engine
@@ -46,7 +46,7 @@ def _build_default_html(diagnostic: asyncpg.Record) -> str:
     "/pdf",
     response_model=ReportPdfResponse,
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def generate_pdf_report(
     request: Request,
     payload: ReportPdfRequest,

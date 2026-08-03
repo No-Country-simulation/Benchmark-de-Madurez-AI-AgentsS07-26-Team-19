@@ -3,7 +3,7 @@
 import asyncpg
 from fastapi import APIRouter, Depends, Request
 
-from app.core.security import limiter
+from app.core.security import RATE_LIMIT, limiter
 from app.deps import get_db
 from app.models.schemas import (
     BenchmarkQuestion,
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
     response_model=list[BenchmarkQuestion],
     summary="List all benchmark questions",
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def list_questions(
     request: Request,
     pool: asyncpg.Pool = Depends(get_db),
@@ -38,7 +38,7 @@ async def list_questions(
     summary="Get population statistics per dimension",
     description="Returns mean, standard deviation, and sample size for each dimension.",
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def get_stats(
     request: Request,
     pool: asyncpg.Pool = Depends(get_db),
@@ -69,7 +69,7 @@ async def get_stats(
     "/percentiles",
     summary="List all precomputed percentile buckets",
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def list_percentiles(
     request: Request,
     pool: asyncpg.Pool = Depends(get_db),
@@ -82,7 +82,7 @@ async def list_percentiles(
     response_model=PercentileLookupResponse,
     summary="Look up the percentile for a given score and dimension",
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def lookup_percentile(
     request: Request,
     payload: PercentileLookupRequest,
@@ -106,7 +106,7 @@ async def lookup_percentile(
         "as a BackgroundTask after each new diagnostic submission."
     ),
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def get_weights(
     request: Request,
     pool: asyncpg.Pool = Depends(get_db),

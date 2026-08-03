@@ -19,11 +19,12 @@ def get_client_ip(request: Request) -> str:
 
 
 _settings = get_settings()
+RATE_LIMIT = f"{_settings.rate_limit_requests}/{_settings.rate_limit_window_seconds}second"
+
 limiter = Limiter(
     key_func=get_client_ip,
-    default_limits=[f"{_settings.rate_limit_requests}/{_settings.rate_limit_window_seconds}second"],
-    # headers_enabled would require every endpoint to return a raw Response;
-    # our handlers return Pydantic models via response_model, so keep it off.
+    # Per-route decorators use RATE_LIMIT; default_limits is intentionally
+    # empty so health checks and un-decorated routes are not rate-limited.
     headers_enabled=False,
     strategy="moving-window",
 )

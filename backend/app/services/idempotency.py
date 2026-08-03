@@ -13,12 +13,19 @@ simultaneous submissions for the same session serialize into a single row.
 
 import hashlib
 import json
+from collections.abc import Iterable
 from typing import Any
 
 from app.models.schemas import DiagnosticAnswer
 
 
-def _normalize(answers: Any) -> list[tuple[str, int]]:
+class IdempotencyConflictError(Exception):
+    """Raised when a session already has a diagnostic with different answers."""
+
+
+def _normalize(
+    answers: Iterable[DiagnosticAnswer | dict[str, Any]] | str | bytes,
+) -> list[tuple[str, int]]:
     """Convert DiagnosticAnswer objects, raw dicts, or a JSON string into pairs."""
     if isinstance(answers, (str, bytes)):
         answers = json.loads(answers)
@@ -33,7 +40,9 @@ def _normalize(answers: Any) -> list[tuple[str, int]]:
     return items
 
 
-def compute_answers_fingerprint(answers: Any) -> str:
+def compute_answers_fingerprint(
+    answers: Iterable[DiagnosticAnswer | dict[str, Any]] | str | bytes,
+) -> str:
     """Return a SHA-256 fingerprint of the answers, independent of ordering.
 
     The fingerprint is computed over the sorted (question_id, value) pairs so

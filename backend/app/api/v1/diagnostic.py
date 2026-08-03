@@ -17,13 +17,12 @@ Design notes:
 """
 
 import json
-from datetime import UTC, datetime
 from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
-from app.core.security import generate_anon_session_id, limiter
+from app.core.security import RATE_LIMIT, generate_anon_session_id, limiter
 from app.deps import get_db
 from app.models.schemas import (
     DiagnosticFrictionProfile,
@@ -35,6 +34,7 @@ from app.models.schemas import (
     WeightsResponse,
 )
 from app.services import benchmark_engine, idempotency, percentiles, scoring
+from app.services.idempotency import IdempotencyConflictError
 from app.services.rebalancing import get_current_weights, run_rebalancing
 
 router = APIRouter(prefix="/diagnostic", tags=["diagnostic"])
@@ -97,7 +97,7 @@ def _build_friction_profile(dimension_scores: list[DimensionScore]) -> Diagnosti
         "result; the same session_id with different answers returns 409."
     ),
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def submit_diagnostic(
     request: Request,
     payload: DiagnosticSubmitRequest,
@@ -120,53 +120,31 @@ async def submit_diagnostic(
     answers_data = [a.model_dump() for a in payload.answers]
     dimension_data = {ds.dimension.value: ds.model_dump() for ds in dimension_scores}
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            # Serialize concurrent submissions for the same session. The lock is
-            # released automatically on commit/rollback (xact-scoped).
-            await conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtext($1))",
-                f"diag:{session_id}",
-            )
-
-            existing = await benchmark_engine.get_diagnostic_by_session(conn, session_id)
-
-            if existing is not None:
-                stored_fingerprint = idempotency.compute_answers_fingerprint(
-                    existing["answers"]
-                )
-                if stored_fingerprint != fingerprint:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=(
-                            "Session already has a diagnostic with different answers. "
-                            "Use a new session_id to submit a new diagnostic."
-                        ),
-                    )
-                diagnostic_id = existing["id"]
-                created_at = existing["created_at"]
-                replayed = True
-            else:
-                diagnostic_id = await benchmark_engine.save_diagnostic(
-                    conn,
-                    session_id=session_id,
-                    overall_score=overall,
-                    dimension_scores=dimension_data,
-                    answers=answers_data,
-                )
-                created_at = datetime.now(UTC)
-                replayed = False
+    try:
+        outcome = await benchmark_engine.save_diagnostic_idempotent(
+            pool,
+            session_id=session_id,
+            fingerprint=fingerprint,
+            overall_score=overall,
+            dimension_scores=dimension_data,
+            answers=answers_data,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
     # Rebalancing only runs for newly-created diagnostics; replays skip it.
-    if not replayed:
+    if not outcome.replayed:
         background_tasks.add_task(run_rebalancing, pool)
 
     result = DiagnosticResult(
-        id=diagnostic_id,
+        id=outcome.diagnostic_id,
         session_id=session_id,
         overall_score=overall,
         dimensions=dimension_scores,
-        created_at=created_at,
+        created_at=outcome.created_at,
     )
 
     friction_profile = _build_friction_profile(dimension_scores)
@@ -182,7 +160,7 @@ async def submit_diagnostic(
 
     message = (
         "Diagnostic replayed from session"
-        if replayed
+        if outcome.replayed
         else "Diagnostic submitted successfully"
     )
 
@@ -200,7 +178,7 @@ async def submit_diagnostic(
     response_model=DiagnosticResult,
     summary="Retrieve a saved diagnostic by ID",
 )
-@limiter.limit("60/minute")
+@limiter.limit(RATE_LIMIT)
 async def get_diagnostic(
     request: Request,
     diagnostic_id: UUID,
