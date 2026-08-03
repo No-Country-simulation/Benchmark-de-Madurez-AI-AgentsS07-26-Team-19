@@ -323,21 +323,24 @@ docker compose up -d --build api
 
 ### Tablas principales
 
-| Tabla                   | Propósito                                      |
-|-------------------------|------------------------------------------------|
-| `benchmark_questions`   | Preguntas del diagnóstico por dimensión        |
-| `benchmark_scores`      | Scores de la población de referencia           |
-| `benchmark_percentiles` | Buckets precalculados de percentiles           |
-| `benchmark_weights`     | Pesos dinámicos por dimensión                  |
-| `diagnostics`           | Resultados de diagnósticos de usuarios         |
+| Tabla                   | Propósito                                                        |
+|-------------------------|------------------------------------------------------------------|
+| `benchmark_questions`   | Preguntas del diagnóstico por dimensión                          |
+| `benchmark_scores`      | Scores de la población de referencia (pública + real)            |
+| `benchmark_percentiles` | Buckets precalculados de percentiles                             |
+| `benchmark_weights`     | Pesos dinámicos por dimensión (actualizados por rebalanceo)      |
+| `rebalancing_config`    | Historial de pesos público/real por conteo de respuestas reales  |
+| `diagnostics`           | Resultados de diagnósticos anónimos de operadores                |
 
 ### Las 5 dimensiones
 
-- `strategic_thinking` — Pensamiento estratégico
-- `execution` — Ejecución
-- `leadership` — Liderazgo
-- `innovation` — Innovación
-- `collaboration` — Colaboración
+| Dimensión | Descripción |
+|-----------|-------------|
+| `visibilidad_cross_layer` | Vista unificada de energía, cooling y workloads |
+| `atribucion_friccion` | Identificación de la interfaz donde se pierde más capacidad |
+| `latencia_coordinacion` | Velocidad de ajuste de cooling y energía ante cambios de workload |
+| `auto_cuantificacion` | Conocimiento de la stranded capacity propia |
+| `bloqueantes` | Obstáculos organizacionales o técnicos que impiden la resolución |
 
 ### Conexión manual
 
@@ -452,12 +455,13 @@ curl -X POST http://localhost:8000/api/v1/diagnostic \
 
 ### Benchmark
 
-| Método | Ruta                           | Descripción                    |
-|--------|--------------------------------|--------------------------------|
-| GET    | `/benchmark/questions`         | Listar preguntas               |
-| GET    | `/benchmark/stats`             | Estadísticas por dimensión     |
-| GET    | `/benchmark/percentiles`       | Tabla de percentiles           |
-| POST   | `/benchmark/percentiles/lookup`| Buscar percentil de un score   |
+| Método | Ruta                           | Descripción                          |
+|--------|--------------------------------|--------------------------------------|
+| GET    | `/benchmark/questions`         | Listar preguntas                     |
+| GET    | `/benchmark/stats`             | Estadísticas por dimensión           |
+| GET    | `/benchmark/percentiles`       | Tabla de percentiles                 |
+| POST   | `/benchmark/percentiles/lookup`| Buscar percentil de un score         |
+| GET    | `/benchmark/weights`           | Pesos actuales público/real          |
 
 ### Report
 

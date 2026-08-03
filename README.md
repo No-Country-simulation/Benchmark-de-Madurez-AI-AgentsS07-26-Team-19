@@ -148,11 +148,11 @@ El MVP entregado es el **Backend de Diagnóstico NLR**: una API FastAPI para dia
 
 - **Motor de benchmark** — evalúa las respuestas del diagnóstico contra un dataset de referencia
 - **Scoring en 5 dimensiones**:
-  - `strategic_thinking` — Pensamiento estratégico
-  - `execution` — Ejecución
-  - `leadership` — Liderazgo
-  - `innovation` — Innovación
-  - `collaboration` — Colaboración
+  - `visibilidad_cross_layer` — Vista unificada de energía, cooling y workloads
+  - `atribucion_friccion` — Identificación de la interfaz con más pérdida de capacidad
+  - `latencia_coordinacion` — Velocidad de ajuste de cooling y energía ante workload
+  - `auto_cuantificacion` — Conocimiento de la stranded capacity propia
+  - `bloqueantes` — Obstáculos organizacionales o técnicos para resolver el problema
 - **Cálculo de percentiles** — buckets precalculados con endpoint de consulta
 - **Rebalanceo dinámico** — los pesos se rebalancean por dimensión según la población
 - **Generación de reportes PDF** — HTML a PDF vía un microservicio independiente de **Puppeteer**
@@ -201,6 +201,7 @@ Base URL: `http://localhost:8000/api/v1`
 | GET | `/benchmark/stats` | Estadísticas por dimensión |
 | GET | `/benchmark/percentiles` | Tabla de percentiles |
 | POST | `/benchmark/percentiles/lookup` | Buscar el percentil de un score |
+| GET | `/benchmark/weights` | Pesos actuales público/real |
 | POST | `/report/pdf` | Generar reporte PDF |
 | GET | `/health` | Estado del API |
 

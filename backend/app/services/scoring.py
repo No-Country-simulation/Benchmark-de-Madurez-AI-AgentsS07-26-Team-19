@@ -1,4 +1,4 @@
-"""Scoring across 5 leadership dimensions."""
+"""Scoring across the 5 data-center maturity dimensions."""
 
 from collections import defaultdict
 
