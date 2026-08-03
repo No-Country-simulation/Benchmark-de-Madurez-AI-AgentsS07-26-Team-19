@@ -1,39 +1,104 @@
+"""Diagnostic endpoint -- submit answers and receive benchmark results.
+
+Design notes:
+  - Thin controller: all business logic lives in the service layer.
+  - BackgroundTask pattern: rebalancing runs after the response is sent
+    so it does not add latency to the request. See:
+    https://fastapi.tiangolo.com/tutorial/background-tasks/
+  - Facade pattern: _build_friction_profile() consolidates multi-dimension
+    data into a single qualitative output without exposing scoring internals.
+"""
+
 from datetime import datetime, timezone
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from app.core.security import generate_anon_session_id
 from app.deps import get_db, rate_limit_dependency
 from app.models.schemas import (
-    DiagnosticResponse,
+    Dimension,
+    DiagnosticFrictionProfile,
+    DiagnosticResponseV2,
     DiagnosticResult,
     DiagnosticSubmitRequest,
     DimensionScore,
+    WeightsResponse,
 )
 from app.services import benchmark_engine, percentiles, scoring
+from app.services.rebalancing import get_current_weights, run_rebalancing
 
 router = APIRouter(prefix="/diagnostic", tags=["diagnostic"])
 
 
+def _build_friction_profile(dimension_scores: list[DimensionScore]) -> DiagnosticFrictionProfile:
+    """Identify the lowest-scoring dimension as the dominant friction point.
+
+    Uses the Facade pattern to convert raw dimension scores into a
+    single human-readable interpretation without exposing scoring internals.
+    """
+    if not dimension_scores:
+        return DiagnosticFrictionProfile(
+            dominant_dimension="unknown",
+            score=0.0,
+            interpretation="No dimension scores available.",
+        )
+
+    worst = min(dimension_scores, key=lambda ds: ds.score)
+
+    interpretations: dict[Dimension, str] = {
+        Dimension.VISIBILIDAD_CROSS_LAYER: (
+            "Cross-layer visibility is the main friction point. "
+            "The facility lacks a unified real-time view across IT, cooling, and power layers."
+        ),
+        Dimension.ATRIBUCION_FRICCION: (
+            "Friction attribution is the primary gap. "
+            "The team cannot pinpoint which physical interface causes the most stranded capacity."
+        ),
+        Dimension.LATENCIA_COORDINACION: (
+            "Coordination latency is the bottleneck. "
+            "Cooling and power do not respond fast enough when workload changes."
+        ),
+        Dimension.AUTO_CUANTIFICACION: (
+            "Self-quantification is the weak point. "
+            "The facility does not have reliable data on how much stranded capacity it carries."
+        ),
+        Dimension.BLOQUEANTES: (
+            "Operational blockers are the primary issue. "
+            "Even when the root cause is known, organizational or technical barriers prevent resolution."
+        ),
+    }
+
+    return DiagnosticFrictionProfile(
+        dominant_dimension=worst.dimension.value,
+        score=worst.score,
+        interpretation=interpretations.get(worst.dimension, f"{worst.dimension.value} scored lowest."),
+    )
+
+
 @router.post(
     "",
-    response_model=DiagnosticResponse,
+    response_model=DiagnosticResponseV2,
+    summary="Submit a benchmark diagnostic",
+    description=(
+        "Receives operator answers, computes dimension scores and percentiles against "
+        "the benchmark population, persists the diagnostic, and triggers a background "
+        "rebalancing task to update public/real dataset weights."
+    ),
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def submit_diagnostic(
     payload: DiagnosticSubmitRequest,
+    background_tasks: BackgroundTasks,
     pool: asyncpg.Pool = Depends(get_db),
-) -> DiagnosticResponse:
+) -> DiagnosticResponseV2:
     session_id = payload.session_id or generate_anon_session_id()
 
     questions = await benchmark_engine.get_questions(pool)
     question_dimensions = {q.id: q.dimension for q in questions}
 
-    dimension_scores = scoring.compute_dimension_scores(
-        payload.answers, question_dimensions
-    )
+    dimension_scores = scoring.compute_dimension_scores(payload.answers, question_dimensions)
 
     for ds in dimension_scores:
         ds.percentile = await percentiles.get_percentile(pool, ds.dimension, ds.score)
@@ -51,6 +116,10 @@ async def submit_diagnostic(
         answers=answers_data,
     )
 
+    # Fire-and-forget: rebalancing runs after the response is returned.
+    # It does not block the request and its failure does not affect the client.
+    background_tasks.add_task(run_rebalancing, pool)
+
     result = DiagnosticResult(
         id=diagnostic_id,
         session_id=session_id,
@@ -59,12 +128,29 @@ async def submit_diagnostic(
         created_at=datetime.now(timezone.utc),
     )
 
-    return DiagnosticResponse(diagnostic=result)
+    friction_profile = _build_friction_profile(dimension_scores)
+    cuartil_superior = overall >= 75.0
+
+    weights_data = await get_current_weights(pool)
+    pesos = WeightsResponse(
+        public_weight=weights_data["public_weight"],
+        real_weight=weights_data["real_weight"],
+        real_count=weights_data["real_count"],
+        updated_at=weights_data["updated_at"],
+    )
+
+    return DiagnosticResponseV2(
+        diagnostic=result,
+        perfil_friccion=friction_profile,
+        cuartil_superior=cuartil_superior,
+        pesos=pesos,
+    )
 
 
 @router.get(
     "/{diagnostic_id}",
     response_model=DiagnosticResult,
+    summary="Retrieve a saved diagnostic by ID",
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def get_diagnostic(
@@ -78,9 +164,7 @@ async def get_diagnostic(
             detail="Diagnostic not found",
         )
 
-    dimensions = [
-        DimensionScore(**v) for v in row["dimension_scores"].values()
-    ]
+    dimensions = [DimensionScore(**v) for v in row["dimension_scores"].values()]
 
     return DiagnosticResult(
         id=row["id"],

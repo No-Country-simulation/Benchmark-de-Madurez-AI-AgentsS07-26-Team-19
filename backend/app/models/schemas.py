@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field
 
 
 class Dimension(str, Enum):
-    STRATEGIC_THINKING = "strategic_thinking"
-    EXECUTION = "execution"
-    LEADERSHIP = "leadership"
-    INNOVATION = "innovation"
-    COLLABORATION = "collaboration"
+    VISIBILIDAD_CROSS_LAYER = "visibilidad_cross_layer"
+    ATRIBUCION_FRICCION = "atribucion_friccion"
+    LATENCIA_COORDINACION = "latencia_coordinacion"
+    AUTO_CUANTIFICACION = "auto_cuantificacion"
+    BLOQUEANTES = "bloqueantes"
 
 
 class DiagnosticAnswer(BaseModel):
@@ -90,3 +90,32 @@ class ErrorResponse(BaseModel):
     detail: str
     code: str | None = None
     extra: dict[str, Any] | None = None
+
+
+# --- V2 schemas for enriched diagnostic response (issue #26) ---
+
+class WeightsResponse(BaseModel):
+    """Current blending weights between public seed data and real submissions."""
+
+    public_weight: float = Field(ge=0, le=1)
+    real_weight: float = Field(ge=0, le=1)
+    real_count: int = Field(ge=0)
+    updated_at: datetime | None = None
+
+
+class DiagnosticFrictionProfile(BaseModel):
+    """Qualitative profile identifying the dominant friction dimension."""
+
+    dominant_dimension: str
+    score: float
+    interpretation: str
+
+
+class DiagnosticResponseV2(BaseModel):
+    """Enriched diagnostic response including friction profile, quartile flag and weights."""
+
+    diagnostic: DiagnosticResult
+    perfil_friccion: DiagnosticFrictionProfile
+    cuartil_superior: bool
+    pesos: WeightsResponse
+    message: str = "Diagnostic submitted successfully"
