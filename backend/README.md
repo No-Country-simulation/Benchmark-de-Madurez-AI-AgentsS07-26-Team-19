@@ -446,9 +446,9 @@ curl -X POST http://localhost:8000/api/v1/diagnostic \
   -H "Content-Type: application/json" \
   -d '{
     "answers": [
-      {"question_id": "st_01", "value": 4},
-      {"question_id": "st_02", "value": 5},
-      {"question_id": "ex_01", "value": 3}
+      {"question_id": "vcl_01", "value": 4},
+      {"question_id": "vcl_02", "value": 5},
+      {"question_id": "af_01", "value": 3}
     ]
   }'
 ```
@@ -520,7 +520,11 @@ docker compose logs api
 
 ### `Rate limit exceeded`
 
-Espera 60 segundos o ajusta `RATE_LIMIT_REQUESTS` en `.env`.
+Espera 60 segundos o ajusta `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` en `.env`.
+
+> Nota: el límite usa slowapi con almacenamiento en memoria (`memory://`), válido para
+> un proceso/servidor. Con varias instancias de uvicorn, cada worker tiene su propio
+> contador; para un límite global consistente migrar a un almacén compartido (Redis).
 
 ### Error al importar módulos (`ModuleNotFoundError: app`)
 

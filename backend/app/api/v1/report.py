@@ -1,9 +1,10 @@
 import base64
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.deps import get_db, get_pdf_client, rate_limit_dependency
+from app.core.security import limiter
+from app.deps import get_db, get_pdf_client
 from app.models.schemas import ReportPdfRequest, ReportPdfResponse
 from app.services import benchmark_engine
 from app.services.pdf_client import PdfClient
@@ -44,9 +45,10 @@ def _build_default_html(diagnostic: asyncpg.Record) -> str:
 @router.post(
     "/pdf",
     response_model=ReportPdfResponse,
-    dependencies=[Depends(rate_limit_dependency)],
 )
+@limiter.limit("60/minute")
 async def generate_pdf_report(
+    request: Request,
     payload: ReportPdfRequest,
     pool: asyncpg.Pool = Depends(get_db),
     pdf_client: PdfClient = Depends(get_pdf_client),

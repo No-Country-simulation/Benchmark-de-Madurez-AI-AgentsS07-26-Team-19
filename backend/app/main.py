@@ -2,11 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import benchmark, diagnostic, report
 from app.core.config import get_settings
 from app.core.database import close_db_pool, init_db_pool
 from app.core.logging import get_logger, setup_logging
+from app.core.security import limiter
 from app.models.schemas import HealthResponse
 
 logger = get_logger(__name__)
@@ -45,6 +48,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     app.include_router(diagnostic.router, prefix=settings.api_v1_prefix)
     app.include_router(benchmark.router, prefix=settings.api_v1_prefix)

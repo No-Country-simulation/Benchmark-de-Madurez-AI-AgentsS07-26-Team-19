@@ -7,26 +7,34 @@ Design notes:
     https://fastapi.tiangolo.com/tutorial/background-tasks/
   - Facade pattern: _build_friction_profile() consolidates multi-dimension
     data into a single qualitative output without exposing scoring internals.
+  - Idempotency pattern: session_id acts as the Idempotency-Key. A repeated
+    submission with the same answers replays the stored result; different
+    answers under the same session conflict (HTTP 409). Concurrency is
+    serialized with pg_advisory_xact_lock, so simultaneous duplicates cannot
+    create two rows. See:
+    https://docs.stripe.com/api/idempotent_requests
+    https://www.postgresql.org/docs/current/functions-admin.html
 """
 
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
-from app.core.security import generate_anon_session_id
-from app.deps import get_db, rate_limit_dependency
+from app.core.security import generate_anon_session_id, limiter
+from app.deps import get_db
 from app.models.schemas import (
-    Dimension,
     DiagnosticFrictionProfile,
     DiagnosticResponseV2,
     DiagnosticResult,
     DiagnosticSubmitRequest,
+    Dimension,
     DimensionScore,
     WeightsResponse,
 )
-from app.services import benchmark_engine, percentiles, scoring
+from app.services import benchmark_engine, idempotency, percentiles, scoring
 from app.services.rebalancing import get_current_weights, run_rebalancing
 
 router = APIRouter(prefix="/diagnostic", tags=["diagnostic"])
@@ -84,16 +92,20 @@ def _build_friction_profile(dimension_scores: list[DimensionScore]) -> Diagnosti
     description=(
         "Receives operator answers, computes dimension scores and percentiles against "
         "the benchmark population, persists the diagnostic, and triggers a background "
-        "rebalancing task to update public/real dataset weights."
+        "rebalancing task to update public/real dataset weights. "
+        "Idempotent: the same session_id with the same answers replays the stored "
+        "result; the same session_id with different answers returns 409."
     ),
-    dependencies=[Depends(rate_limit_dependency)],
 )
+@limiter.limit("60/minute")
 async def submit_diagnostic(
+    request: Request,
     payload: DiagnosticSubmitRequest,
     background_tasks: BackgroundTasks,
     pool: asyncpg.Pool = Depends(get_db),
 ) -> DiagnosticResponseV2:
     session_id = payload.session_id or generate_anon_session_id()
+    fingerprint = idempotency.compute_answers_fingerprint(payload.answers)
 
     questions = await benchmark_engine.get_questions(pool)
     question_dimensions = {q.id: q.dimension for q in questions}
@@ -108,24 +120,53 @@ async def submit_diagnostic(
     answers_data = [a.model_dump() for a in payload.answers]
     dimension_data = {ds.dimension.value: ds.model_dump() for ds in dimension_scores}
 
-    diagnostic_id = await benchmark_engine.save_diagnostic(
-        pool,
-        session_id=session_id,
-        overall_score=overall,
-        dimension_scores=dimension_data,
-        answers=answers_data,
-    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Serialize concurrent submissions for the same session. The lock is
+            # released automatically on commit/rollback (xact-scoped).
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"diag:{session_id}",
+            )
 
-    # Fire-and-forget: rebalancing runs after the response is returned.
-    # It does not block the request and its failure does not affect the client.
-    background_tasks.add_task(run_rebalancing, pool)
+            existing = await benchmark_engine.get_diagnostic_by_session(conn, session_id)
+
+            if existing is not None:
+                stored_fingerprint = idempotency.compute_answers_fingerprint(
+                    existing["answers"]
+                )
+                if stored_fingerprint != fingerprint:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Session already has a diagnostic with different answers. "
+                            "Use a new session_id to submit a new diagnostic."
+                        ),
+                    )
+                diagnostic_id = existing["id"]
+                created_at = existing["created_at"]
+                replayed = True
+            else:
+                diagnostic_id = await benchmark_engine.save_diagnostic(
+                    conn,
+                    session_id=session_id,
+                    overall_score=overall,
+                    dimension_scores=dimension_data,
+                    answers=answers_data,
+                )
+                created_at = datetime.now(UTC)
+                replayed = False
+
+    # Rebalancing only runs for newly-created diagnostics; replays skip it.
+    if not replayed:
+        background_tasks.add_task(run_rebalancing, pool)
 
     result = DiagnosticResult(
         id=diagnostic_id,
         session_id=session_id,
         overall_score=overall,
         dimensions=dimension_scores,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at,
     )
 
     friction_profile = _build_friction_profile(dimension_scores)
@@ -139,11 +180,18 @@ async def submit_diagnostic(
         updated_at=weights_data["updated_at"],
     )
 
+    message = (
+        "Diagnostic replayed from session"
+        if replayed
+        else "Diagnostic submitted successfully"
+    )
+
     return DiagnosticResponseV2(
         diagnostic=result,
         perfil_friccion=friction_profile,
         cuartil_superior=cuartil_superior,
         pesos=pesos,
+        message=message,
     )
 
 
@@ -151,9 +199,10 @@ async def submit_diagnostic(
     "/{diagnostic_id}",
     response_model=DiagnosticResult,
     summary="Retrieve a saved diagnostic by ID",
-    dependencies=[Depends(rate_limit_dependency)],
 )
+@limiter.limit("60/minute")
 async def get_diagnostic(
+    request: Request,
     diagnostic_id: UUID,
     pool: asyncpg.Pool = Depends(get_db),
 ) -> DiagnosticResult:
@@ -164,7 +213,9 @@ async def get_diagnostic(
             detail="Diagnostic not found",
         )
 
-    dimensions = [DimensionScore(**v) for v in row["dimension_scores"].values()]
+    dimensions = [
+        DimensionScore(**v) for v in json.loads(row["dimension_scores"]).values()
+    ]
 
     return DiagnosticResult(
         id=row["id"],

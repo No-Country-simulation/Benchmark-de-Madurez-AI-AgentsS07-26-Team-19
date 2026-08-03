@@ -39,14 +39,35 @@ async def get_diagnostic_by_id(
     )
 
 
+async def get_diagnostic_by_session(
+    conn: asyncpg.Connection, session_id: str
+) -> asyncpg.Record | None:
+    """Return the most recent diagnostic for a session, if any.
+
+    Used by the idempotency guard: a repeated submission under the same
+    session replays the stored result instead of inserting a duplicate.
+    """
+    return await conn.fetchrow(
+        """
+        SELECT id, session_id, overall_score, dimension_scores, answers, created_at
+        FROM diagnostics
+        WHERE session_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        session_id,
+    )
+
+
 async def save_diagnostic(
-    pool: asyncpg.Pool,
+    conn: asyncpg.Connection,
     session_id: str,
     overall_score: float,
     dimension_scores: dict,
     answers: list[dict],
 ) -> UUID:
-    row = await pool.fetchrow(
+    """Insert a diagnostic inside an existing transaction (advisory-lock held by caller)."""
+    row = await conn.fetchrow(
         """
         INSERT INTO diagnostics (session_id, overall_score, dimension_scores, answers)
         VALUES ($1, $2, $3::jsonb, $4::jsonb)
