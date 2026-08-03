@@ -1,3 +1,5 @@
+"""Benchmark endpoints -- questions, stats, percentile lookup, and weights."""
+
 import asyncpg
 from fastapi import APIRouter, Depends
 
@@ -8,8 +10,10 @@ from app.models.schemas import (
     Dimension,
     PercentileLookupRequest,
     PercentileLookupResponse,
+    WeightsResponse,
 )
 from app.services import benchmark_engine, percentiles
+from app.services.rebalancing import get_current_weights
 
 router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 
@@ -17,6 +21,7 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 @router.get(
     "/questions",
     response_model=list[BenchmarkQuestion],
+    summary="List all benchmark questions",
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def list_questions(
@@ -28,6 +33,8 @@ async def list_questions(
 @router.get(
     "/stats",
     response_model=list[BenchmarkStats],
+    summary="Get population statistics per dimension",
+    description="Returns mean, standard deviation, and sample size for each dimension.",
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def get_stats(
@@ -36,9 +43,9 @@ async def get_stats(
     rows = await pool.fetch(
         """
         SELECT dimension,
-               AVG(score) AS mean,
+               AVG(score)    AS mean,
                STDDEV(score) AS std_dev,
-               COUNT(*) AS sample_size
+               COUNT(*)      AS sample_size
         FROM benchmark_scores
         GROUP BY dimension
         ORDER BY dimension
@@ -57,6 +64,7 @@ async def get_stats(
 
 @router.get(
     "/percentiles",
+    summary="List all precomputed percentile buckets",
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def list_percentiles(
@@ -68,17 +76,39 @@ async def list_percentiles(
 @router.post(
     "/percentiles/lookup",
     response_model=PercentileLookupResponse,
+    summary="Look up the percentile for a given score and dimension",
     dependencies=[Depends(rate_limit_dependency)],
 )
 async def lookup_percentile(
     payload: PercentileLookupRequest,
     pool: asyncpg.Pool = Depends(get_db),
 ) -> PercentileLookupResponse:
-    percentile = await percentiles.get_percentile(
-        pool, payload.dimension, payload.score
-    )
+    percentile = await percentiles.get_percentile(pool, payload.dimension, payload.score)
     return PercentileLookupResponse(
         dimension=payload.dimension,
         score=payload.score,
         percentile=percentile,
+    )
+
+
+@router.get(
+    "/weights",
+    response_model=WeightsResponse,
+    summary="Get current public vs real dataset blending weights",
+    description=(
+        "Returns the current weights used to blend the public NLR seed dataset "
+        "with real operator submissions. Weights are recalculated automatically "
+        "as a BackgroundTask after each new diagnostic submission."
+    ),
+    dependencies=[Depends(rate_limit_dependency)],
+)
+async def get_weights(
+    pool: asyncpg.Pool = Depends(get_db),
+) -> WeightsResponse:
+    data = await get_current_weights(pool)
+    return WeightsResponse(
+        public_weight=data["public_weight"],
+        real_weight=data["real_weight"],
+        real_count=data["real_count"],
+        updated_at=data["updated_at"],
     )
