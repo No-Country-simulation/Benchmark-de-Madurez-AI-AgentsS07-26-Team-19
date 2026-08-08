@@ -1,96 +1,113 @@
-"""Percentile calculation against benchmark population."""
+"""Percentile calculation against the blended public + real population.
+
+The percentile is computed ON THE FLY (en vuelo): for each request we merge
+the public reference dataset (public_dataset) with the real submissions
+(benchmark_result) using weighted sampling, then compute where the user's
+score falls. No precomputed cache table is used.
+
+Design:
+    - weighted_merge(): pure function, blends two score lists by weight.
+    - calculate_percentile(): pure function, rank of a score in a list.
+    - calculate_percentiles_for_user(): DB orchestration per dimension.
+"""
+
+import math
+import random
 
 import asyncpg
-import random
-import math
 
-from app.models.schemas import Dimension
-
-
-async def get_percentile(
-    pool: asyncpg.Pool,
-    dimension: Dimension,
-    score: float,
-) -> float:
-    """Return percentile (0–100) for a score within a dimension."""
-    row = await pool.fetchrow(
-        """
-        SELECT percentile
-        FROM benchmark_percentiles
-        WHERE dimension = $1
-          AND score_bucket <= $2
-        ORDER BY score_bucket DESC
-        LIMIT 1
-        """,
-        dimension.value,
-        score,
-    )
-    if row:
-        return float(row["percentile"])
-
-    # Fallback: compute from raw scores if percentile table is empty
-    stats = await pool.fetchrow(
-        """
-        SELECT COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE score <= $2) AS below
-        FROM benchmark_scores
-        WHERE dimension = $1
-        """,
-        dimension.value,
-        score,
-    )
-    if stats and stats["total"] > 0:
-        return round((stats["below"] / stats["total"]) * 100, 2)
-    return 50.0
+# Maps the short dimension name to the fixed column in public_dataset / benchmark_result
+DIMENSION_COLUMN = {
+    "visibility": "visibility_score",
+    "friction": "friction_score",
+    "latency": "latency_score",
+    "quantification": "quantification_score",
+    "blockers": "blockers_score",
+}
 
 
-async def get_all_percentiles(
-    pool: asyncpg.Pool,
-) -> list[dict]:
-    rows = await pool.fetch(
-        """
-        SELECT dimension, score_bucket, percentile
-        FROM benchmark_percentiles
-        ORDER BY dimension, score_bucket
-        """
-    )
-    return [dict(row) for row in rows]
+# ---------------------------------------------------------------------------
+# Pure functions (no database) — these never change
+# ---------------------------------------------------------------------------
 
 def weighted_merge(
-        public_scores: list[float],
-        real_scores: list[float],
-        public_weight: float,
-        real_weight: float,
+    public_scores: list[float],
+    real_scores: list[float],
+    public_weight: float,
+    real_weight: float,
 ) -> list[float]:
-    """Combine two score datasets using weighted sampling."""
-    #how many elements to take from each dataset
+    """Combine two score datasets using weighted sampling without replacement."""
     n_public = int(len(public_scores) * public_weight)
     n_real = int(len(real_scores) * real_weight)
 
-    #randomly sample without replacement
     sampled_public = random.sample(public_scores, min(n_public, len(public_scores)))
     sampled_real = random.sample(real_scores, min(n_real, len(real_scores)))
 
-    #combine and return
     return sampled_public + sampled_real
 
-def calculate_percentile(
-        user_score: float, # operator score
-        combined_dataset: list[float], #dataset mixed from public and real scores
-) -> float:
-    """Calculate the percentile of a user score within a combined dataset.
-        Formula: (count of values below user_score) / total_values × 100
-        If the dataset is empty, returns 50.0 (neutral)."""
+
+def calculate_percentile(user_score: float, combined_dataset: list[float]) -> float:
+    """Percentile of user_score within combined_dataset (0–100).
+
+    Formula: (count of values below user_score) / total_values × 100.
+    Returns 50.0 if the dataset is empty (neutral).
+    """
     if not combined_dataset:
         return 50.0
-    
+
     all_scores = combined_dataset + [user_score]
     all_scores.sort()
 
-    below = sum(1 for s in  all_scores if s < user_score) 
-    percentile = (below / len(all_scores)) * 100
+    below = sum(1 for s in all_scores if s < user_score)
+    return round((below / len(all_scores)) * 100, 1)
 
-    return round(percentile, 1)
+
+def compute_percentile_thresholds(
+    scores: list[float],
+    percentiles: list[float] | None = None,
+) -> dict[float, float]:
+    """Score threshold for each requested percentile (e.g. P25, P75)."""
+    if percentiles is None:
+        percentiles = [10, 25, 50, 75, 90, 99]
+
+    if not scores:
+        return {p: 0.0 for p in percentiles}
+
+    sorted_scores = sorted(scores)
+    n = len(sorted_scores)
+    thresholds = {}
+
+    for p in percentiles:
+        index = int(math.ceil(p / 100 * n)) - 1
+        index = max(0, min(index, n - 1))
+        thresholds[p] = round(sorted_scores[index], 1)
+
+    return thresholds
+
+
+# ---------------------------------------------------------------------------
+# Database helpers (v2 schema)
+# ---------------------------------------------------------------------------
+
+async def _get_public_scores(pool: asyncpg.Pool, column: str) -> list[float]:
+    """All public reference scores for one dimension column."""
+    rows = await pool.fetch(
+        f"SELECT {column} AS score FROM public_dataset WHERE {column} IS NOT NULL"
+    )
+    return [float(r["score"]) for r in rows]
+
+
+async def _get_real_scores(pool: asyncpg.Pool, column: str) -> list[float]:
+    """All real submission scores for one dimension column."""
+    rows = await pool.fetch(
+        f"SELECT {column} AS score FROM benchmark_result WHERE {column} IS NOT NULL"
+    )
+    return [float(r["score"]) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 async def calculate_percentiles_for_user(
     pool: asyncpg.Pool,
@@ -98,147 +115,53 @@ async def calculate_percentiles_for_user(
     public_weight: float = 0.7,
     real_weight: float = 0.3,
 ) -> dict[str, float]:
+    """Percentile per dimension, blending public + real datasets on the fly.
+
+    Args:
+        pool: asyncpg pool.
+        dimension_scores: {'visibility': 70.0, 'friction': 50.0, ...}.
+        public_weight / real_weight: blending weights (sum to 1).
+
+    Returns:
+        {'visibility': 65.0, 'friction': 40.0, ...} — percentile per dimension.
     """
-    Calculate percentiles for all dimensions by merging public and real datasets.
-    
-    For each dimension:
-    1. Fetch public scores from benchmark_scores table
-    2. Fetch real scores from diagnostics table (JSONB)
-    3. Mix them using weighted_merge()
-    4. Calculate the user's percentile with calculate_percentile()
-    """
-    dimensions = [dim.value for dim in Dimension]
     percentiles: dict[str, float] = {}
 
-    for dim in dimensions:
-        # 1. Fetch public scores for this dimension
-        public_rows = await pool.fetch(
-            """
-            SELECT score FROM benchmark_scores
-            WHERE dimension = $1
-            """,
-            dim,
-        )
-        public_scores = [float(row["score"]) for row in public_rows]
-
-        # 2. Fetch real scores from existing diagnostics
-        real_rows = await pool.fetch(
-            """
-            SELECT (dimension_scores->>$1)::float AS score
-            FROM diagnostics
-            WHERE dimension_scores ? $1
-            """,
-            dim,
-        )
-        real_scores = [float(row["score"]) for row in real_rows]
-
-        # 3. Merge datasets using weighted sampling
+    for dim, column in DIMENSION_COLUMN.items():
+        public_scores = await _get_public_scores(pool, column)
+        real_scores = await _get_real_scores(pool, column)
         merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
-
-        # 4. Calculate user's percentile
         user_score = dimension_scores.get(dim, 0.0)
         percentiles[dim] = calculate_percentile(user_score, merged)
 
     return percentiles
 
-def compute_percentile_thresholds(
-    scores: list[float],
-    percentiles: list[float] = None,
-) -> dict[float, float]:
-    """
-    Given a list of scores, compute the score threshold for each requested percentile.
-    
-    Returns: {10.0: 23.5, 25.0: 35.2, 50.0: 50.0, 75.0: 68.1, 90.0: 82.3, 99.0: 95.7}
-    """
-    if percentiles is None:
-        percentiles = [10, 25, 50, 75, 90, 99]
-    
-    if not scores:
-        return {p: 0.0 for p in percentiles}
-    
-    sorted_scores = sorted(scores)
-    n = len(sorted_scores)
-    thresholds = {}
-    
-    for p in percentiles:
-        # Index position for this percentile
-        index = int(math.ceil(p / 100 * n)) - 1
-        index = max(0, min(index, n - 1))  # Clamp to valid range
-        thresholds[p] = round(sorted_scores[index], 1)
-    
-    return thresholds
 
-async def refresh_percentile_cache(
+async def get_percentile(
+    pool: asyncpg.Pool,
+    dimension: str,
+    score: float,
+    public_weight: float = 0.7,
+    real_weight: float = 0.3,
+) -> float:
+    """Convenience: percentile for ONE dimension (on the fly)."""
+    column = DIMENSION_COLUMN[dimension]
+    public_scores = await _get_public_scores(pool, column)
+    real_scores = await _get_real_scores(pool, column)
+    merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
+    return calculate_percentile(score, merged)
+
+
+async def get_all_percentiles(
     pool: asyncpg.Pool,
     public_weight: float = 0.7,
     real_weight: float = 0.3,
-) -> dict[str, dict[float, float]]:
-    """
-    Recalculate and store percentile thresholds for all dimensions.
-    
-    Returns the computed thresholds for each dimension.
-    This function is meant to run periodically (e.g., via cron or after N new diagnostics).
-    """
-    dimensions = [dim.value for dim in Dimension]
-    all_thresholds: dict[str, dict[float, float]] = {}
-
-    for dim in dimensions:
-        # 1. Fetch all public scores
-        public_rows = await pool.fetch(
-            "SELECT score FROM benchmark_scores WHERE dimension = $1", dim
-        )
-        public_scores = [float(row["score"]) for row in public_rows]
-
-        # 2. Fetch all real scores
-        real_rows = await pool.fetch(
-            """
-            SELECT (dimension_scores->>$1)::float AS score
-            FROM diagnostics WHERE dimension_scores ? $1
-            """,
-            dim,
-        )
-        real_scores = [float(row["score"]) for row in real_rows]
-
-        # 3. Merge datasets
+) -> dict[str, dict]:
+    """Percentile thresholds for every dimension (for stats endpoints)."""
+    result: dict[str, dict] = {}
+    for dim, column in DIMENSION_COLUMN.items():
+        public_scores = await _get_public_scores(pool, column)
+        real_scores = await _get_real_scores(pool, column)
         merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
-
-        # 4. Compute thresholds
-        thresholds = compute_percentile_thresholds(merged)
-        all_thresholds[dim] = thresholds
-
-        # 5. Store in DB (delete old, insert new)
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM benchmark_percentiles WHERE dimension = $1", dim
-            )
-            for percentile, score in thresholds.items():
-                await conn.execute(
-                    """
-                    INSERT INTO benchmark_percentiles (dimension, score_bucket, percentile)
-                    VALUES ($1, $2, $3)
-                    """,
-                    dim,
-                    score,
-                    percentile,
-                )
-    return all_thresholds
-
-async def get_cached_percentile(
-    pool: asyncpg.Pool,
-    dimension: str,
-    user_score: float,
-) -> float:
-    """
-    Get the user's percentile from the cached thresholds.
-    Much faster than recalculating from raw data every time.
-    """
-    row = await pool.fetchrow(
-        """
-        SELECT percentile FROM benchmark_percentiles
-        WHERE dimension = $1 AND score_bucket <= $2
-        ORDER BY score_bucket DESC LIMIT 1
-        """,
-        dimension,
-        user_score,
-    )
-    return float(row["percentile"]) if row else 50.0
+        result[dim] = compute_percentile_thresholds(merged)
+    return result
