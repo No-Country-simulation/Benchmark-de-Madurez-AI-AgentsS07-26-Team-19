@@ -1,21 +1,19 @@
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-class Dimension(str, Enum):
-    VISIBILIDAD_CROSS_LAYER = "visibilidad_cross_layer"
-    ATRIBUCION_FRICCION = "atribucion_friccion"
-    LATENCIA_COORDINACION = "latencia_coordinacion"
-    AUTO_CUANTIFICACION = "auto_cuantificacion"
-    BLOQUEANTES = "bloqueantes"
-
+class Dimension(StrEnum):
+    VISIBILITY       = "visibility"
+    FRICTION         = "friction"
+    LATENCY          = "latency"
+    QUANTIFICATION   = "quantification"
+    BLOCKERS         = "blockers"
 
 class DiagnosticAnswer(BaseModel):
-    question_id: str
+    question_id: int                      # ← cambia de str a int
     value: int = Field(ge=1, le=5)
 
 
@@ -31,7 +29,7 @@ class DimensionScore(BaseModel):
 
 
 class DiagnosticResult(BaseModel):
-    id: UUID
+    id: int                          # v2: id del benchmark_response (SERIAL)
     session_id: str
     overall_score: float
     dimensions: list[DimensionScore]
@@ -44,7 +42,7 @@ class DiagnosticResponse(BaseModel):
 
 
 class BenchmarkQuestion(BaseModel):
-    id: str
+    id: int                                
     dimension: Dimension
     text: str
     order: int
@@ -69,7 +67,7 @@ class PercentileLookupResponse(BaseModel):
 
 
 class ReportPdfRequest(BaseModel):
-    diagnostic_id: UUID
+    diagnostic_id: int                # v2: id del benchmark_response (SERIAL)
     html_content: str | None = None
     template: str = "default"
 

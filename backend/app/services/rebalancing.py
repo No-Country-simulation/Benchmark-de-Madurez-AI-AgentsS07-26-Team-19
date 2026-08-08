@@ -13,9 +13,11 @@ The real_weight is capped at MAX_REAL_WEIGHT (0.80) so that the public
 seed dataset always contributes at least 20 % of the benchmark population,
 preserving statistical stability when real submissions are few or biased.
 
-Design pattern: Strategy
-    compute_weights() is a pure function that encapsulates the blending
-    algorithm. It can be swapped or extended without touching the callers.
+Design (v2):
+    - The blend state lives in the single-row table `rebalance_config`
+      (columns public_weight / primary_weight). Every rebalance run updates
+      that row; no audit history is kept (see perspective: option A).
+    - Real submissions are counted from `benchmark_response`.
 
 References:
     - Issue #23: https://github.com/No-Country-simulation/Benchmark-de-Madurez-AI-AgentsS07-26-Team-19/issues/23
@@ -26,11 +28,12 @@ References:
 import asyncpg
 
 from app.core.logging import get_logger
-from app.models.schemas import Dimension
 
 logger = get_logger(__name__)
 
 MAX_REAL_WEIGHT: float = 0.80  # public dataset always contributes >= 20 %
+
+CONFIG_ID: int = 1  # rebalance_config is a single-row table (id = 1)
 
 
 def compute_weights(real_count: int) -> tuple[float, float]:
@@ -71,36 +74,33 @@ async def run_rebalancing(pool: asyncpg.Pool) -> tuple[float, float]:
     submission. All DB writes are wrapped in a single transaction so that
     a failure leaves no partial state.
 
+    v2: updates the single row of `rebalance_config` (id = CONFIG_ID).
+    `real_weight` is stored in the `primary_weight` column; the sum check
+    constraint (public_weight + primary_weight = 1) is applied by Postgres.
+
     Returns:
         Tuple of (public_weight, real_weight) that were stored.
     """
     async with pool.acquire() as conn:
-        real_count: int = await conn.fetchval("SELECT COUNT(*) FROM diagnostics")
+        real_count: int = await conn.fetchval(
+            "SELECT COUNT(*) FROM benchmark_response"
+        )
         public_weight, real_weight = compute_weights(real_count)
 
-        dim_weight = round(public_weight / len(Dimension), 4)
-
         async with conn.transaction():
-            for dim in Dimension:
-                await conn.execute(
-                    """
-                    INSERT INTO benchmark_weights (dimension, weight, updated_at)
-                    VALUES ($1, $2, NOW())
-                    ON CONFLICT (dimension) DO UPDATE
-                    SET weight = EXCLUDED.weight, updated_at = NOW()
-                    """,
-                    dim.value,
-                    dim_weight,
-                )
-
             await conn.execute(
                 """
-                INSERT INTO rebalancing_config (real_count, real_weight, pub_weight, updated_at)
-                VALUES ($1, $2, $3, NOW())
+                INSERT INTO rebalance_config (id, public_weight, primary_weight,
+                                              min_responses, description, updated_at)
+                VALUES ($1, $2, $3, 0, 'current blend state', NOW())
+                ON CONFLICT (id) DO UPDATE
+                SET public_weight = EXCLUDED.public_weight,
+                    primary_weight = EXCLUDED.primary_weight,
+                    updated_at = NOW()
                 """,
-                real_count,
-                real_weight,
+                CONFIG_ID,
                 public_weight,
+                real_weight,
             )
 
     logger.info(
@@ -113,23 +113,28 @@ async def run_rebalancing(pool: asyncpg.Pool) -> tuple[float, float]:
 
 
 async def get_current_weights(pool: asyncpg.Pool) -> dict:
-    """Return the latest rebalancing state from the database.
+    """Return the latest rebalancing state.
 
     Falls back to the initial state (all public, 0 real) if no record exists.
     """
+    real_count: int = await pool.fetchval(
+        "SELECT COUNT(*) FROM benchmark_response"
+    )
+
     row = await pool.fetchrow(
         """
-        SELECT real_count, real_weight, pub_weight, updated_at
-        FROM rebalancing_config
-        ORDER BY id DESC
-        LIMIT 1
-        """
+        SELECT public_weight, primary_weight, updated_at
+        FROM rebalance_config
+        WHERE id = $1
+        """,
+        CONFIG_ID,
     )
+
     if row:
         return {
-            "real_count": row["real_count"],
-            "real_weight": float(row["real_weight"]),
-            "public_weight": float(row["pub_weight"]),
+            "real_count": real_count,
+            "real_weight": float(row["primary_weight"]),
+            "public_weight": float(row["public_weight"]),
             "updated_at": row["updated_at"],
         }
-    return {"real_count": 0, "real_weight": 0.0, "public_weight": 1.0, "updated_at": None}
+    return {"real_count": real_count, "real_weight": 0.0, "public_weight": 1.0, "updated_at": None}

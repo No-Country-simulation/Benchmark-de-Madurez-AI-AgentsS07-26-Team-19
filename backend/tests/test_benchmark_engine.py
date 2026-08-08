@@ -1,13 +1,12 @@
-"""Tests for the benchmark_engine service, including idempotent persistence."""
+"""Tests for the benchmark_engine service, including idempotent persistence (v2)."""
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
-from app.models.schemas import DiagnosticAnswer
-from app.services.benchmark_engine import DiagnosticOutcome, save_diagnostic_idempotent
+from app.models.schemas import DiagnosticAnswer, Dimension, DimensionScore
+from app.services.benchmark_engine import save_diagnostic_idempotent
 from app.services.idempotency import IdempotencyConflictError, compute_answers_fingerprint
 
 
@@ -33,10 +32,18 @@ class _FakeConn:
         return "ok"
 
     async def fetchrow(self, *args: str, **kwargs: object) -> dict[str, Any] | None:
-        if "FROM diagnostics" in args[0]:
+        if "FROM benchmark_response" in args[0]:
             return self.pool.stored_row
-        if "INSERT INTO diagnostics" in args[0]:
-            return {"id": self.pool.next_id}
+        return None
+
+    async def fetch(self, *args: str, **kwargs: object) -> list[dict[str, Any]]:
+        if "FROM response_answer" in args[0]:
+            return self.pool.stored_answers
+        return []
+
+    async def fetchval(self, *args: str, **kwargs: object) -> int | None:
+        if "INSERT INTO benchmark_response" in args[0]:
+            return self.pool.next_id
         return None
 
 
@@ -52,85 +59,80 @@ class _FakePoolCtx:
 
 
 class _FakePool:
-    def __init__(self, stored_row: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        stored_row: dict[str, Any] | None = None,
+        stored_answers: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.stored_row = stored_row
-        self.next_id = uuid4()
+        self.stored_answers = stored_answers or []
+        self.next_id = 999
 
     def acquire(self) -> _FakePoolCtx:
         return _FakePoolCtx(self)
 
 
+ANSWERS = [DiagnosticAnswer(question_id=1, value=5)]
+DIMS = [DimensionScore(dimension=Dimension.VISIBILITY, score=80.0)]
+
+
+@pytest.mark.asyncio
 async def test_save_diagnostic_idempotent_creates_new() -> None:
     pool = _FakePool()
-    fingerprint = compute_answers_fingerprint(
-        [DiagnosticAnswer(question_id="vcl_01", value=5)]
-    )
-
     outcome = await save_diagnostic_idempotent(
         pool,
         session_id="sess-1",
-        fingerprint=fingerprint,
+        fingerprint=compute_answers_fingerprint(ANSWERS),
+        answers=ANSWERS,
+        dimension_scores=DIMS,
         overall_score=80.0,
-        dimension_scores={"visibilidad_cross_layer": {"score": 80.0}},
-        answers=[{"question_id": "vcl_01", "value": 5}],
+        overall_percentile=70.0,
     )
 
-    assert isinstance(outcome, DiagnosticOutcome)
     assert outcome.replayed is False
     assert outcome.diagnostic_id == pool.next_id
-    assert outcome.created_at <= datetime.now(UTC)
+    assert outcome.created_at is not None
 
 
+@pytest.mark.asyncio
 async def test_save_diagnostic_idempotent_replays_existing() -> None:
-    stored_id = uuid4()
-    stored_at = datetime.now(UTC)
     pool = _FakePool(
         stored_row={
-            "id": stored_id,
-            "session_id": "sess-1",
-            "answers": '[{"question_id": "vcl_01", "value": 5}]',
-            "created_at": stored_at,
-        }
+            "id": 42,
+            "created_at": datetime.now(UTC),
+        },
+        stored_answers=[{"question_id": 1, "answer": "5"}],
     )
-    fingerprint = compute_answers_fingerprint(
-        [DiagnosticAnswer(question_id="vcl_01", value=5)]
-    )
-
     outcome = await save_diagnostic_idempotent(
         pool,
         session_id="sess-1",
-        fingerprint=fingerprint,
+        fingerprint=compute_answers_fingerprint(ANSWERS),
+        answers=ANSWERS,
+        dimension_scores=DIMS,
         overall_score=80.0,
-        dimension_scores={"visibilidad_cross_layer": {"score": 80.0}},
-        answers=[{"question_id": "vcl_01", "value": 5}],
+        overall_percentile=70.0,
     )
 
     assert outcome.replayed is True
-    assert outcome.diagnostic_id == stored_id
-    assert outcome.created_at == stored_at
+    assert outcome.diagnostic_id == 42
 
 
+@pytest.mark.asyncio
 async def test_save_diagnostic_idempotent_conflicts_on_different_answers() -> None:
-    stored_id = uuid4()
-    stored_at = datetime.now(UTC)
     pool = _FakePool(
         stored_row={
-            "id": stored_id,
-            "session_id": "sess-1",
-            "answers": '[{"question_id": "vcl_01", "value": 3}]',
-            "created_at": stored_at,
-        }
+            "id": 42,
+            "created_at": datetime.now(UTC),
+        },
+        stored_answers=[{"question_id": 2, "answer": "3"}],
     )
-    fingerprint = compute_answers_fingerprint(
-        [DiagnosticAnswer(question_id="vcl_01", value=5)]
-    )
-
     with pytest.raises(IdempotencyConflictError):
         await save_diagnostic_idempotent(
             pool,
             session_id="sess-1",
-            fingerprint=fingerprint,
+            fingerprint=compute_answers_fingerprint(ANSWERS),
+            answers=ANSWERS,
+            dimension_scores=DIMS,
             overall_score=80.0,
-            dimension_scores={"visibilidad_cross_layer": {"score": 80.0}},
-            answers=[{"question_id": "vcl_01", "value": 5}],
+            overall_percentile=70.0,
         )

@@ -25,11 +25,11 @@ class IdempotencyConflictError(Exception):
 
 def _normalize(
     answers: Iterable[DiagnosticAnswer | dict[str, Any]] | str | bytes,
-) -> list[tuple[str, int]]:
+) -> list[tuple[int, int]]:
     """Convert DiagnosticAnswer objects, raw dicts, or a JSON string into pairs."""
     if isinstance(answers, (str, bytes)):
         answers = json.loads(answers)
-    items: list[tuple[str, int]] = []
+    items: list[tuple[int, int]] = []
     for answer in answers:
         if isinstance(answer, DiagnosticAnswer):
             items.append((answer.question_id, answer.value))

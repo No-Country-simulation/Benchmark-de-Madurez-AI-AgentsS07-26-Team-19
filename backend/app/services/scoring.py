@@ -4,19 +4,21 @@ from collections import defaultdict
 
 from app.models.schemas import DiagnosticAnswer, Dimension, DimensionScore
 
-
 DIMENSIONS = list(Dimension)
 
 
 def compute_dimension_scores(
     answers: list[DiagnosticAnswer],
-    question_dimensions: dict[str, Dimension],
+    question_dimensions: dict[int, Dimension],   # ← AHORA SÍ, int
 ) -> list[DimensionScore]:
-    """Aggregate answers per dimension on a 0–100 scale."""
+    """Agrupa respuestas por dimensión en escala 0-100.
+
+    question_dimensions: mapea cada question_id (int) a su Dimension.
+    """
     totals: dict[Dimension, list[int]] = defaultdict(list)
 
     for answer in answers:
-        dimension = question_dimensions.get(answer.question_id)
+        dimension = question_dimensions.get(answer.question_id)  # key = int
         if dimension:
             totals[dimension].append(answer.value)
 

@@ -13,15 +13,29 @@ router = APIRouter(prefix="/report", tags=["report"])
 
 
 def _build_default_html(diagnostic: asyncpg.Record) -> str:
-    scores = diagnostic["dimension_scores"]
+    """Genera el HTML del reporte a partir del registro v2 (benchmark_response + benchmark_result).
+
+    NOTA: en v2 los scores viven en columnas fijas (visibility_score, ...),
+    ya no en JSONB `dimension_scores` (modelo viejo). Este mapeo es el reflejo
+    del esquema creado en schema-v2.sql.
+    """
+    dims = [
+        ("visibility", "visibility_score"),
+        ("friction", "friction_score"),
+        ("latency", "latency_score"),
+        ("quantification", "quantification_score"),
+        ("blockers", "blockers_score"),
+    ]
     rows = ""
-    for dim, data in scores.items():
-        rows += f"<tr><td>{dim.replace('_', ' ').title()}</td><td>{data['score']}</td><td>{data.get('percentile', 'N/A')}</td></tr>"
+    for label, column in dims:
+        value = diagnostic.get(column)
+        scores_html = f"<td>{value if value is not None else 'N/A'}</td>"
+        rows += f"<tr><td>{label.title()}</td>{scores_html}<td>N/A</td></tr>"
 
     return f"""
     <!DOCTYPE html>
     <html>
-    <head><meta charset="utf-8"><title>NLR Diagnostic Report</title>
+    <head><meta charset="utf-8"><title>NLR Benchmark Report</title>
     <style>
       body {{ font-family: Arial, sans-serif; margin: 40px; }}
       h1 {{ color: #1a365d; }}
@@ -31,8 +45,8 @@ def _build_default_html(diagnostic: asyncpg.Record) -> str:
     </style>
     </head>
     <body>
-      <h1>NLR Leadership Diagnostic Report</h1>
-      <p><strong>Overall Score:</strong> {diagnostic['overall_score']}</p>
+      <h1>NLR Data Center Maturity Report</h1>
+      <p><strong>Overall Score:</strong> {diagnostic.get('overall_score', 'N/A')}</p>
       <table>
         <thead><tr><th>Dimension</th><th>Score</th><th>Percentile</th></tr></thead>
         <tbody>{rows}</tbody>

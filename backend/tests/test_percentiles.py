@@ -1,6 +1,10 @@
 """Tests for percentile calculation functions."""
 
-from app.services.percentiles import weighted_merge, calculate_percentile, compute_percentile_thresholds
+from app.services.percentiles import (
+    calculate_percentile,
+    compute_percentile_thresholds,
+    weighted_merge,
+)
 
 
 def test_only_public():

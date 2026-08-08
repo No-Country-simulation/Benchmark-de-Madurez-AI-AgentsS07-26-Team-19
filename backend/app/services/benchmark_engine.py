@@ -2,16 +2,35 @@
 
 This module follows a Repository-like pattern: the service owns all database
 access and transactional rules, while the API controller stays thin.
+
+The engine works against the v2 schema:
+    - `question`               → active benchmark questions.
+    - `benchmark_response`     → one row per completed session
+      (anonymous_code field acts as the natural idempotency key).
+    - `response_answer`        → one row per question answered, with its
+      normalized per-question score (0-100).
+    - `benchmark_result`       → per-dimension scores, overall score and
+      overall percentile for each response.
+
+Idempotency: `session_id` is treated as an Idempotency-Key. A repeated
+submission with the same answers under the same session replays the stored
+result; different answers under the same session raise an
+IdempotencyConflictError. Concurrency is serialized with a PostgreSQL
+transaction-scoped advisory lock.
 """
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
-from uuid import UUID
+from typing import Any, cast
 
 import asyncpg
 
-from app.models.schemas import BenchmarkQuestion, Dimension
+from app.models.schemas import (
+    BenchmarkQuestion,
+    DiagnosticAnswer,
+    Dimension,
+    DimensionScore,
+)
 from app.services.idempotency import (
     IdempotencyConflictError,
     compute_answers_fingerprint,
@@ -23,13 +42,13 @@ class DiagnosticOutcome:
     """Result of an idempotent diagnostic submission.
 
     Attributes:
-        diagnostic_id: UUID of the stored (or replayed) diagnostic.
+        diagnostic_id: id of the stored (or replayed) benchmark_response.
         created_at: Timestamp of the diagnostic record.
         replayed: True if an existing diagnostic was replayed, False if a new
             one was inserted.
     """
 
-    diagnostic_id: UUID
+    diagnostic_id: int
     created_at: datetime
     replayed: bool
 
@@ -37,30 +56,35 @@ class DiagnosticOutcome:
 async def get_questions(pool: asyncpg.Pool) -> list[BenchmarkQuestion]:
     rows = await pool.fetch(
         """
-        SELECT id, dimension, text, display_order
-        FROM benchmark_questions
-        ORDER BY display_order ASC
+        SELECT id, dimension, question AS text, order_index AS order
+        FROM question
+        WHERE is_active = TRUE
+        ORDER BY order_index ASC
         """
     )
     return [
         BenchmarkQuestion(
-            id=row["id"],
+            id=row["id"],  # ahora int
             dimension=Dimension(row["dimension"]),
             text=row["text"],
-            order=row["display_order"],
+            order=row["order"],
         )
         for row in rows
     ]
 
 
 async def get_diagnostic_by_id(
-    pool: asyncpg.Pool, diagnostic_id: UUID
+    pool: asyncpg.Pool, diagnostic_id: int
 ) -> asyncpg.Record | None:
     return await pool.fetchrow(
         """
-        SELECT id, session_id, overall_score, dimension_scores, created_at
-        FROM diagnostics
-        WHERE id = $1
+        SELECT r.id, r.anonymous_code, br.overall_score, br.overall_percentile,
+               br.visibility_score, br.friction_score, br.latency_score,
+               br.quantification_score, br.blockers_score,
+               r.created_at, r.completed_at
+        FROM benchmark_response r
+        LEFT JOIN benchmark_result br ON br.response_id = r.id
+        WHERE r.id = $1
         """,
         diagnostic_id,
     )
@@ -68,53 +92,113 @@ async def get_diagnostic_by_id(
 
 async def get_diagnostic_by_session(
     conn: asyncpg.Connection, session_id: str
-) -> asyncpg.Record | None:
+) -> dict[str, Any] | None:
     """Return the most recent diagnostic for a session, if any.
 
     Used by the idempotency guard: a repeated submission under the same
     session replays the stored result instead of inserting a duplicate.
+    The stored answers are rebuilt from `response_answer` so the fingerprint
+    can be compared against the incoming submission.
     """
-    return await conn.fetchrow(
+    response = await conn.fetchrow(
         """
-        SELECT id, session_id, overall_score, dimension_scores, answers, created_at
-        FROM diagnostics
-        WHERE session_id = $1
+        SELECT id, created_at
+        FROM benchmark_response
+        WHERE anonymous_code = $1
         ORDER BY created_at DESC
         LIMIT 1
         """,
         session_id,
     )
+    if response is None:
+        return None
+
+    answers = await conn.fetch(
+        """
+        SELECT question_id, answer
+        FROM response_answer
+        WHERE response_id = $1
+        ORDER BY question_id
+        """,
+        response["id"],
+    )
+    return {
+        "id": response["id"],
+        "answers": [
+            {"question_id": row["question_id"], "value": int(row["answer"])}
+            for row in answers
+            if row["answer"] is not None
+        ],
+        "created_at": response["created_at"],
+    }
 
 
 async def save_diagnostic(
     conn: asyncpg.Connection,
     session_id: str,
+    answers: list[DiagnosticAnswer],
+    dimension_scores: list[DimensionScore],
     overall_score: float,
-    dimension_scores: dict[str, dict[str, Any]],
-    answers: list[dict[str, Any]],
-) -> UUID:
-    """Insert a diagnostic inside an existing transaction."""
-    row = await conn.fetchrow(
+    overall_percentile: float,
+) -> int:
+    """Insert a new diagnostic inside an existing transaction (v2 schema).
+
+    Steps: benchmark_response → response_answer × N → benchmark_result.
+    """
+    # 1) Crea la encuesta (benchmark_response); anonymous_code = session_id
+    response_id = await conn.fetchval(
         """
-        INSERT INTO diagnostics (session_id, overall_score, dimension_scores, answers)
-        VALUES ($1, $2, $3::jsonb, $4::jsonb)
+        INSERT INTO benchmark_response (anonymous_code, completed_at)
+        VALUES ($1, NOW())
         RETURNING id
         """,
         session_id,
-        overall_score,
-        dimension_scores,
-        answers,
     )
-    return UUID(str(row["id"]))
+
+    # 2) Inserta cada respuesta (response_answer) con su score normalizado
+    for answer in answers:
+        await conn.execute(
+            """
+            INSERT INTO response_answer (response_id, question_id, answer, score)
+            VALUES ($1, $2, $3, $4)
+            """,
+            response_id,
+            answer.question_id,
+            str(answer.value),
+            (answer.value / 5) * 100,
+        )
+
+    # 3) Guarda el resultado (benchmark_result)
+    scores_map = {ds.dimension.value: ds.score for ds in dimension_scores}
+    await conn.execute(
+        """
+        INSERT INTO benchmark_result (
+            response_id, visibility_score, friction_score,
+            latency_score, quantification_score, blockers_score,
+            overall_score, overall_percentile
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        """,
+        response_id,
+        scores_map.get("visibility", 0.00),
+        scores_map.get("friction", 0.00),
+        scores_map.get("latency", 0.00),
+        scores_map.get("quantification", 0.00),
+        scores_map.get("blockers", 0.00),
+        overall_score,
+        overall_percentile,
+    )
+    return cast(int, response_id)
 
 
 async def save_diagnostic_idempotent(
     pool: asyncpg.Pool,
     session_id: str,
     fingerprint: str,
+    answers: list[DiagnosticAnswer],
+    dimension_scores: list[DimensionScore],
     overall_score: float,
-    dimension_scores: dict[str, dict[str, Any]],
-    answers: list[dict[str, Any]],
+    overall_percentile: float,
 ) -> DiagnosticOutcome:
     """Persist or replay a diagnostic keyed by session_id.
 
@@ -155,9 +239,10 @@ async def save_diagnostic_idempotent(
             diagnostic_id = await save_diagnostic(
                 conn,
                 session_id=session_id,
-                overall_score=overall_score,
-                dimension_scores=dimension_scores,
                 answers=answers,
+                dimension_scores=dimension_scores,
+                overall_score=overall_score,
+                overall_percentile=overall_percentile,
             )
             return DiagnosticOutcome(
                 diagnostic_id=diagnostic_id,
