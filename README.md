@@ -82,8 +82,10 @@ Base URL: `http://localhost:8000/api/v1`
 | GET | `/benchmark/stats` | Statistics per dimension |
 | GET | `/benchmark/percentiles` | Percentile table |
 | POST | `/benchmark/percentiles/lookup` | Look up the percentile of a score |
+| GET | `/benchmark/weights` | Current public/real blending weights |
 | POST | `/report/pdf` | Generate PDF report |
 | GET | `/health` | API health check |
+| GET | `/health/ai` | AI analysis service health |
 
 Interactive docs at `http://localhost:8000/docs` once running.
 
@@ -97,7 +99,7 @@ docker compose up -d --build
 
 The schema v2 and seed are applied automatically on first boot (via `/docker-entrypoint-initdb.d/`). Reset with `docker compose down -v`.
 
-Services: `db` (5432) · `api` (8000) · `puppeteer` (3001)
+Services (dev override): `db` (5432) · `api` (8000) · `puppeteer` (3001) · `ai`/Ollama (11434)
 
 ### Option B — Local development
 
@@ -124,6 +126,7 @@ pytest --cov=app --cov-report=term-missing   # with coverage
 
 ## Official Documentation
 
+- [`docs/`](./docs/README.md) — Technical docs hub for this backend (EN/ES) · Arquitectura, API, esquema, lógica de negocio, IA y despliegue
 - [FastAPI docs](https://fastapi.tiangolo.com/) — the framework reference
 - [PostgreSQL docs](https://www.postgresql.org/docs/) — database reference
 - [Puppeteer docs](https://pptr.dev) — HTML to PDF generation
@@ -205,6 +208,7 @@ Base URL: `http://localhost:8000/api/v1`
 | GET | `/benchmark/weights` | Pesos actuales público/real |
 | POST | `/report/pdf` | Generar reporte PDF |
 | GET | `/health` | Estado del API |
+| GET | `/health/ai` | Estado del servicio de análisis IA |
 
 Documentación interactiva en `http://localhost:8000/docs` una vez corriendo.
 
@@ -218,7 +222,7 @@ docker compose up -d --build
 
 El schema v2 y el seed se aplican automáticamente al primer arranque (vía `/docker-entrypoint-initdb.d/`). Reset con `docker compose down -v`.
 
-Servicios: `db` (5432) · `api` (8000) · `puppeteer` (3001)
+Servicios (override dev): `db` (5432) · `api` (8000) · `puppeteer` (3001) · `ai`/Ollama (11434)
 
 ### Opción B — Desarrollo local
 
@@ -245,6 +249,7 @@ pytest --cov=app --cov-report=term-missing   # con cobertura
 
 ## Documentación Oficial
 
+- [`docs/`](./docs/README.md) — Centro de documentación técnica de este backend (EN/ES) · Arquitectura, API, esquema, lógica de negocio, IA y despliegue
 - [FastAPI docs](https://fastapi.tiangolo.com/) — la referencia del framework
 - [PostgreSQL docs](https://www.postgresql.org/docs/) — referencia de la base de datos
 - [Puppeteer docs](https://pptr.dev) — generación de HTML a PDF

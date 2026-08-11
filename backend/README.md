@@ -5,22 +5,40 @@ Una startup de infraestructura de IA está construyendo el benchmark de madurez 
 
 API FastAPI para el diagnóstico de liderazgo NLR. Incluye motor de benchmark, scoring en 5 dimensiones, cálculo de percentiles, rebalanceo dinámico y generación de reportes PDF vía microservicio Puppeteer.
 
+La respuesta del diagnóstico es enriquecida (v2): perfil de fricción (dimensión dominante más débil), bandera de cuartil superior y los pesos vigentes público/real del rebalanceo. Incluye además análisis cualitativo IA en background (protocolo OpenAI-compatible: Ollama local o Hugging Face Inference Providers).
+
 ---
 
 ## Tabla de contenidos
 
 1. [Requisitos previos](#requisitos-previos)
 2. [Estructura del proyecto](#estructura-del-proyecto)
-3. [Instalación local (sin Docker)](#instalación-local-sin-docker)
-4. [Instalación con Docker Compose](#instalación-con-docker-compose)
-5. [Configuración de la base de datos](#configuración-de-la-base-de-datos)
-6. [Variables de entorno](#variables-de-entorno)
-7. [Ejecutar el servidor](#ejecutar-el-servidor)
-8. [Microservicio Puppeteer (PDF)](#microservicio-puppeteer-pdf)
-9. [Endpoints de la API](#endpoints-de-la-api)
-10. [Despliegue en la nube (Supabase + Vercel)](#despliegue-en-la-nube-supabase--vercel)
-11. [Tests](#tests)
-12. [Solución de problemas](#solución-de-problemas)
+3. [Documentación](#documentación)
+4. [Instalación local (sin Docker)](#instalación-local-sin-docker)
+5. [Instalación con Docker Compose](#instalación-con-docker-compose)
+6. [Configuración de la base de datos](#configuración-de-la-base-de-datos)
+7. [Variables de entorno](#variables-de-entorno)
+8. [Ejecutar el servidor](#ejecutar-el-servidor)
+9. [Microservicio Puppeteer (PDF)](#microservicio-puppeteer-pdf)
+10. [Endpoints de la API](#endpoints-de-la-api)
+11. [Despliegue en la nube (Supabase + Vercel)](#despliegue-en-la-nube-supabase--vercel)
+12. [Tests](#tests)
+13. [Solución de problemas](#solución-de-problemas)
+
+---
+
+## Documentación
+
+La documentación técnica completa vive en [`docs/`](../docs/README.md) (en español), con diagramas Mermaid:
+
+| Documento | Contenido |
+|---|---|
+| [docs/architecture.md](../docs/architecture.md) | Arquitectura: C4 contexto y componentes, mapa de módulos, flujo de datos |
+| [docs/api.md](../docs/api.md) | Referencia de endpoints, esquemas request/response, errores, rate limits |
+| [docs/database-schema.md](../docs/database-schema.md) | Esquema v2: ERD, tablas, seed, mapeo de columnas |
+| [docs/business-logic.md](../docs/business-logic.md) | Scoring, percentiles en vuelo, rebalanceo e idempotencia (con diagramas) |
+| [docs/ai-analysis.md](../docs/ai-analysis.md) | Cliente IA, prompt, Ollama local vs HF, degradación |
+| [docs/deployment.md](../docs/deployment.md) | Docker Compose, Supabase + Vercel, variables de entorno |
 
 ---
 
@@ -48,16 +66,18 @@ API FastAPI para el diagnóstico de liderazgo NLR. Incluye motor de benchmark, s
 
 ## Estructura del proyecto
 
-Monorepo con backend y frontend (este último se agregará en el mismo repositorio):
+Repositorio backend-only (el frontend aún no está en este repo):
 
 ```
 .
 ├── backend/                     # API FastAPI + servicios
 │   ├── app/
 │   │   ├── main.py              # FastAPI app, middleware, lifespan
+│   │   ├── deps.py              # Dependencias compartidas (pool, clientes)
 │   │   ├── core/
 │   │   │   ├── config.py        # Settings (pydantic-settings)
 │   │   │   ├── database.py      # asyncpg pool
+│   │   │   ├── cache.py         # Cache TTL en proceso (stats/percentiles)
 │   │   │   ├── dimensions.py    # Fuente única de las 5 dimensiones
 │   │   │   ├── security.py      # Rate limiting, anon session
 │   │   │   └── logging.py       # Structured logging
@@ -69,23 +89,35 @@ Monorepo con backend y frontend (este último se agregará en el mismo repositor
 │   │   │   ├── percentiles.py
 │   │   │   ├── rebalancing.py
 │   │   │   ├── idempotency.py
+│   │   │   ├── ai_client.py     # Cliente IA (protocolo OpenAI-compatible)
 │   │   │   └── pdf_client.py
-│   │   ├── api/v1/
-│   │   │   ├── diagnostic.py
-│   │   │   ├── benchmark.py
-│   │   │   └── report.py
-│   │   └── deps.py
+│   │   └── api/v1/
+│   │       ├── diagnostic.py
+│   │       ├── benchmark.py
+│   │       └── report.py
+│   ├── api/index.py             # Entrypoint ASGI de Vercel
 │   ├── puppeteer-service/       # Microservicio Node + Puppeteer (PDF, solo local)
 │   ├── scripts/
 │   │   ├── schema-v2.sql        # DDL v2 (FKS, checks, TIMESTAMPTZ)
-│   │   └── seed-v2.sql          # Seed idempotente (15 preguntas + 20 filas públicas)
-│   ├── tests/
+│   │   ├── seed-v2.sql          # Seed idempotente (15 preguntas + 20 filas públicas)
+│   │   ├── nlr_feature_engineering.py
+│   │   └── data/dataset.csv     # Dataset de telemetría NLR HPC PUE
+│   ├── tests/                   # Suite pytest
+│   ├── vercel.json
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   ├── requirements.txt
 │   └── .env.example
-├── frontend/                    # (próximamente)
+├── docs/                        # Documentación técnica (español)
+│   ├── README.md                # Índice de documentación
+│   ├── architecture.md          # C4 contexto + componentes, flujo de datos
+│   ├── api.md                   # Referencia de la API REST
+│   ├── database-schema.md       # Esquema v2 + ERD
+│   ├── business-logic.md        # Scoring, percentiles, rebalanceo, idempotencia
+│   ├── ai-analysis.md           # Servicio de análisis IA
+│   └── deployment.md            # Docker Compose, Supabase, Vercel
 ├── docker-compose.yml           # Orquestación de servicios
+├── docker-compose.override.yml  # Override local (dev): puertos + servicio ai
 └── README.md
 ```
 
@@ -382,7 +414,7 @@ Copia `backend/.env.example` a `backend/.env`. Referencia completa:
 | `PDF_SERVICE_TIMEOUT_SECONDS` | `30`                     | Timeout para generación de PDF       |
 | `AI_SERVICE_URL`              | `http://localhost:11434` | URL del servicio de IA (Ollama local o `https://router.huggingface.co`) |
 | `HF_TOKEN`                    | *(vacío)*                | Token HF Read para el router de Inference Providers |
-| `AI_MODEL`                    | `meta-llama/Llama-3.3-70B-Instruct` | Modelo IA (nube) / NeuralQwen español (Ollama local) |
+| `AI_MODEL`                    | `hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M` | Modelo IA (default local); en nube suele ser `meta-llama/Llama-3.3-70B-Instruct` |
 | `AI_TIMEOUT_SECONDS`          | `120`                    | Timeout para el análisis IA          |
 | `AI_MAX_TOKENS`               | `512`                    | Límite de tokens del análisis        |
 | `LOG_LEVEL`                   | `INFO`                   | Nivel de logging                     |
@@ -471,6 +503,10 @@ curl -X POST http://localhost:3001/generate \
 ---
 
 ## Despliegue en la nube (Supabase + Vercel)
+
+> **Estado actual:** la API ya está **desplegada y operativa** en este stack
+> (Vercel serverless + Supabase pooler + Hugging Face Inference Providers).
+> El PDF se genera en el frontend; `puppeteer-service` no está desplegado.
 
 Stack objetivo, 100% en free tiers:
 
@@ -663,6 +699,7 @@ curl -X POST http://localhost:8000/api/v1/diagnostic \
 | Método | Ruta      | Descripción    |
 |--------|-----------|----------------|
 | GET    | `/health` | Estado del API |
+| GET    | `/health/ai` | Estado del servicio de análisis IA (probe a `/v1/models`) |
 
 ---
 
