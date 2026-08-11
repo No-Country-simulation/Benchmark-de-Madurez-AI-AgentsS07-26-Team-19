@@ -1,12 +1,24 @@
-import { create } from "zustand"
+import { create } from 'zustand'
 
-// Definir la interfaz para el estado a almacenar
-interface CounterState {
-  count: number
-  increment: () => void
+import type { DiagnosticResponseV2 } from '@/types/diagnostic'
+
+interface BenchmarkState {
+  answers: Record<number, number>
+  sessionId: string | null
+  lastResult: DiagnosticResponseV2 | null
+  setAnswer: (questionId: number, value: number) => void
+  setSessionId: (sessionId: string | null) => void
+  setLastResult: (result: DiagnosticResponseV2) => void
+  clear: () => void
 }
 
-export const useCounterStore = create<CounterState>((set) => ({
-  count: 0,
-  increment: () => set((state) => ({ count: state.count + 1 })),
+export const useBenchmarkStore = create<BenchmarkState>((set) => ({
+  answers: {},
+  sessionId: null,
+  lastResult: null,
+  setAnswer: (questionId, value) =>
+    set((state) => ({ answers: { ...state.answers, [questionId]: value } })),
+  setSessionId: (sessionId) => set({ sessionId }),
+  setLastResult: (lastResult) => set({ lastResult }),
+  clear: () => set({ answers: {}, sessionId: null }),
 }))
