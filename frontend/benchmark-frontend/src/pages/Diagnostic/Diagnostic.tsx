@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import ProgressBar from '@/components/diagnostics/ProgressBar'
@@ -26,7 +26,10 @@ export default function Diagnostic() {
   const setLastResult = useBenchmarkStore((state) => state.setLastResult)
 
   const { data: questions, isError, isPending } = useBenchmarkQuestions()
-  const sortedQuestions = isPending || isError ? [] : (questions ?? []).toSorted(orderBy)
+  const sortedQuestions = useMemo(() => {
+    if (isPending || isError) return []
+    return [...(questions ?? [])].sort(orderBy)
+  }, [questions, isPending, isError])
 
   const safeIndex = Math.min(currentIndex, Math.max(sortedQuestions.length - 1, 0))
   const currentQuestion = sortedQuestions[safeIndex] ?? null
