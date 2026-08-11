@@ -552,6 +552,7 @@ El repo ya trae `api/index.py` (handler ASGI) y `vercel.json` (`maxDuration` 300
    | `POSTGRES_PASSWORD` | *(password del proyecto)* |
    | `POSTGRES_DB` | `postgres` |
    | `POSTGRES_SSL` | `true` |
+   | `POSTGRES_CA_CERT` | contenido PEM de `prod-ca-2021.crt` (`Settings → Database → SSL Configuration`) — habilita verify-full |
    | `AI_SERVICE_URL` | `https://router.huggingface.co` |
    | `HF_TOKEN` | *(token Read hf_...)* |
    | `AI_MODEL` | `meta-llama/Llama-3.3-70B-Instruct` |

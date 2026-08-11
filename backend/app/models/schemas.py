@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
@@ -37,11 +37,6 @@ class DiagnosticResult(BaseModel):
     ai_analysis: str | None = None
 
 
-class DiagnosticResponse(BaseModel):
-    diagnostic: DiagnosticResult
-    message: str = "Diagnostic submitted successfully"
-
-
 class BenchmarkQuestion(BaseModel):
     id: int
     dimension: Dimension
@@ -70,11 +65,9 @@ class PercentileLookupResponse(BaseModel):
 class ReportPdfRequest(BaseModel):
     diagnostic_id: int
     html_content: str | None = None
-    template: str = "default"
 
 
 class ReportPdfResponse(BaseModel):
-    pdf_url: str | None = None
     pdf_base64: str | None = None
     filename: str
 
@@ -83,12 +76,6 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     environment: str
-
-
-class ErrorResponse(BaseModel):
-    detail: str
-    code: str | None = None
-    extra: dict[str, Any] | None = None
 
 
 # --- V2 schemas for enriched diagnostic response (issue #26) ---

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     postgres_max_pool_size: int = 3
     # Supabase exige TLS; activar POSTGRES_SSL=true al apuntar a Supabase.
     postgres_ssl: bool = False
+    # CA pública de Supabase (contenido PEM de "prod-ca-2021.crt", descargable en
+    # Project Settings -> Database -> SSL Configuration) para verificar el cert
+    # del pooler con verify-full. Si queda vacío, la conexión se cifra pero NO
+    # se valida el certificado del servidor (ver app/core/database.py).
+    postgres_ca_cert: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -46,7 +51,6 @@ class Settings(BaseSettings):
         )
 
     # Security
-    anon_session_ttl_seconds: int = 86_400  # 24h
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
     # Confiar en X-Forwarded-For (solo si la API corre detrás de un proxy

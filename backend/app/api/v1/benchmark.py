@@ -11,8 +11,10 @@ poblaciones grandes convendría revisitar si se necesita cache. Por ahora,
 20 filas públicas es trivial.
 """
 
+import asyncpg
 from fastapi import APIRouter, Request
 
+from app.core.cache import ttl_cache
 from app.core.dimensions import DIMENSION_SCORE_COLUMN, NAME_TO_DIMENSION
 from app.core.security import RATE_LIMIT, limiter
 from app.deps import DbPool
@@ -46,6 +48,37 @@ async def list_questions(
     return await benchmark_engine.get_questions(pool)
 
 
+@ttl_cache(seconds=30)
+async def _fetch_dimension_stats(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    """UNION de las 5 columnas fijas de public_dataset + benchmark_result.
+
+    Cacheado 30s: no depende de ningun parametro de request, asi que es el
+    endpoint mas facil de golpear con volumen para forzar trabajo en la DB.
+    """
+    select_blocks = []
+    for dimension, column in DIMENSION_SCORE_COLUMN.items():
+        select_blocks.append(
+            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM public_dataset"
+        )
+        select_blocks.append(
+            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM benchmark_result"
+        )
+    union_sql = "\nUNION ALL\n".join(select_blocks)
+
+    return await pool.fetch(
+        f"""
+        SELECT dim AS dimension,
+               AVG(score)    AS mean,
+               STDDEV(score) AS std_dev,
+               COUNT(*)      AS sample_size
+        FROM ({union_sql}) t
+        WHERE score IS NOT NULL
+        GROUP BY dim
+        ORDER BY dim
+        """
+    )
+
+
 @router.get(
     "/stats",
     response_model=list[BenchmarkStats],
@@ -60,34 +93,10 @@ async def get_stats(
 ) -> list[BenchmarkStats]:
     """Estadísticas (media, desviación, n) por dimensión del pool fundido.
 
-    v2: en vez de leer `benchmark_scores` (que no existe), hace un UNION de
-    las 5 columnas fijas de `public_dataset` + `benchmark_result`.
-
     NOTA FUTURA: si el frontend quiere stats separadas público/real, habría
     que agregar un filtro source — hoy se mezclan ambas en un solo conjunto.
     """
-    select_blocks = []
-    for dimension, column in DIMENSION_SCORE_COLUMN.items():
-        select_blocks.append(
-            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM public_dataset"
-        )
-        select_blocks.append(
-            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM benchmark_result"
-        )
-    union_sql = "\nUNION ALL\n".join(select_blocks)
-
-    rows = await pool.fetch(
-        f"""
-        SELECT dim AS dimension,
-               AVG(score)    AS mean,
-               STDDEV(score) AS std_dev,
-               COUNT(*)      AS sample_size
-        FROM ({union_sql}) t
-        WHERE score IS NOT NULL
-        GROUP BY dim
-        ORDER BY dim
-        """
-    )
+    rows = await _fetch_dimension_stats(pool)
     return [
         BenchmarkStats(
             dimension=NAME_TO_DIMENSION[row["dimension"]],

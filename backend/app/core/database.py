@@ -17,12 +17,17 @@ async def init_db_pool(settings: Settings | None = None) -> Pool:
     cfg = settings or get_settings()
     kwargs: dict[str, Any] = {}
     if cfg.postgres_ssl:
-        # Supabase exige TLS, pero el pooler (Supavisor) usa un certificado
-        # self-signed que no encadena con una CA pública. Se encripta la
-        # conexión sin verificar el certificado del servidor.
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if cfg.postgres_ca_cert:
+            # verify-full: valida el cert del pooler (Supavisor) contra la CA
+            # pública de Supabase y compara el hostname.
+            ctx = ssl.create_default_context(cadata=cfg.postgres_ca_cert)
+        else:
+            # Sin CA configurada (POSTGRES_CA_CERT vacío): se encripta la
+            # conexión pero no se valida el certificado del servidor. Setear
+            # POSTGRES_CA_CERT en producción para habilitar verify-full.
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         kwargs["ssl"] = ctx
 
     _pool = await asyncpg.create_pool(

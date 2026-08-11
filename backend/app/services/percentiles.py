@@ -17,6 +17,7 @@ import random
 
 import asyncpg
 
+from app.core.cache import ttl_cache
 from app.core.dimensions import DIMENSION_SCORE_COLUMN
 from app.models.schemas import Dimension
 
@@ -83,6 +84,7 @@ def compute_percentile_thresholds(
 # Database helpers (v2 schema) — shared, no duplication
 # ---------------------------------------------------------------------------
 
+@ttl_cache(seconds=30)
 async def _load_blended_scores(
     pool: asyncpg.Pool,
     column: str,
@@ -92,7 +94,10 @@ async def _load_blended_scores(
     """Merge public + real scores for one dimension column, weighted.
 
     Shared by every public percentile function so the fetch+merge orchestration
-    lives in exactly one place.
+    lives in exactly one place. Cacheado 30s: son las dos SELECT completas de
+    public_dataset/benchmark_result, el punto mas caro de este modulo y el mas
+    facil de golpear con volumen (via /percentiles, /percentiles/lookup, y el
+    calculo de percentiles en cada submit de /diagnostic).
     """
     public_rows = await pool.fetch(
         f"SELECT {column} AS score FROM public_dataset WHERE {column} IS NOT NULL"
