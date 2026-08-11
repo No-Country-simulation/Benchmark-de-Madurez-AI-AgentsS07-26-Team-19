@@ -44,3 +44,6 @@ ignore_missing_imports = true
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = false

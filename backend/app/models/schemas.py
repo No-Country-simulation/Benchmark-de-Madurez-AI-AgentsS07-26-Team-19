@@ -13,7 +13,7 @@ class Dimension(StrEnum):
     BLOCKERS         = "blockers"
 
 class DiagnosticAnswer(BaseModel):
-    question_id: int                      # ← cambia de str a int
+    question_id: int
     value: int = Field(ge=1, le=5)
 
 
@@ -29,11 +29,12 @@ class DimensionScore(BaseModel):
 
 
 class DiagnosticResult(BaseModel):
-    id: int                          # v2: id del benchmark_response (SERIAL)
+    id: int
     session_id: str
     overall_score: float
     dimensions: list[DimensionScore]
     created_at: datetime
+    ai_analysis: str | None = None
 
 
 class DiagnosticResponse(BaseModel):
@@ -42,7 +43,7 @@ class DiagnosticResponse(BaseModel):
 
 
 class BenchmarkQuestion(BaseModel):
-    id: int                                
+    id: int
     dimension: Dimension
     text: str
     order: int
@@ -67,7 +68,7 @@ class PercentileLookupResponse(BaseModel):
 
 
 class ReportPdfRequest(BaseModel):
-    diagnostic_id: int                # v2: id del benchmark_response (SERIAL)
+    diagnostic_id: int
     html_content: str | None = None
     template: str = "default"
 

@@ -15,6 +15,14 @@ build/
 # Env & secrets
 .env
 **/.env
+*.env
+!.env.example
+
+# IDE
+.idea/
+
+# Artefactos generados
+*.pdf
 
 # Testing & linting
 .coverage

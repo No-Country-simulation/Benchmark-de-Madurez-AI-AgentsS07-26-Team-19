@@ -82,6 +82,7 @@ async def get_diagnostic_by_id(
         SELECT r.id, r.anonymous_code, br.overall_score, br.overall_percentile,
                br.visibility_score, br.friction_score, br.latency_score,
                br.quantification_score, br.blockers_score,
+               br.ai_analysis,
                r.created_at, r.completed_at
         FROM benchmark_response r
         LEFT JOIN benchmark_result br ON br.response_id = r.id

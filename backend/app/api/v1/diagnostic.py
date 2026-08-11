@@ -263,4 +263,5 @@ async def get_diagnostic(
         overall_score=float(row["overall_score"]),
         dimensions=dimensions,
         created_at=row["created_at"],
+        ai_analysis=row["ai_analysis"],
     )

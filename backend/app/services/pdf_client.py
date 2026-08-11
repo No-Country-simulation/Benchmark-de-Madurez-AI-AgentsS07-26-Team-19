@@ -5,9 +5,6 @@ import base64
 import httpx
 
 from app.core.config import Settings
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
 
 
 class PdfClient:
@@ -34,12 +31,3 @@ class PdfClient:
             return base64.b64decode(data["pdf"])
 
         raise ValueError("PDF service returned unexpected response format")
-
-    async def health_check(self) -> bool:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/health")
-                return response.status_code == 200
-        except httpx.HTTPError as exc:
-            logger.warning("pdf_service_unavailable", error=str(exc))
-            return False

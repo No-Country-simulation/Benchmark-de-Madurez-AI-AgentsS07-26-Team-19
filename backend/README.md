@@ -18,8 +18,9 @@ API FastAPI para el diagnóstico de liderazgo NLR. Incluye motor de benchmark, s
 7. [Ejecutar el servidor](#ejecutar-el-servidor)
 8. [Microservicio Puppeteer (PDF)](#microservicio-puppeteer-pdf)
 9. [Endpoints de la API](#endpoints-de-la-api)
-10. [Tests](#tests)
-11. [Solución de problemas](#solución-de-problemas)
+10. [Despliegue en la nube (Supabase + Vercel)](#despliegue-en-la-nube-supabase--vercel)
+11. [Tests](#tests)
+12. [Solución de problemas](#solución-de-problemas)
 
 ---
 
@@ -74,8 +75,7 @@ Monorepo con backend y frontend (este último se agregará en el mismo repositor
 │   │   │   ├── benchmark.py
 │   │   │   └── report.py
 │   │   └── deps.py
-│   ├── puppeteer-service/       # Microservicio Node + Puppeteer
-│   ├── ai-service/              # Microservicio de IA (Ollama + NeuralQwen español)
+│   ├── puppeteer-service/       # Microservicio Node + Puppeteer (PDF, solo local)
 │   ├── scripts/
 │   │   ├── schema-v2.sql        # DDL v2 (FKS, checks, TIMESTAMPTZ)
 │   │   └── seed-v2.sql          # Seed idempotente (15 preguntas + 20 filas públicas)
@@ -371,15 +371,18 @@ Copia `backend/.env.example` a `backend/.env`. Referencia completa:
 | `POSTGRES_USER`               | `nlr`                    | Usuario de PostgreSQL                |
 | `POSTGRES_PASSWORD`           | `nlr_secret`             | Contraseña de PostgreSQL             |
 | `POSTGRES_DB`                 | `nlr_diagnostic`         | Nombre de la base de datos           |
-| `POSTGRES_MIN_POOL_SIZE`      | `2`                      | Conexiones mínimas del pool          |
-| `POSTGRES_MAX_POOL_SIZE`      | `10`                     | Conexiones máximas del pool          |
+| `POSTGRES_MIN_POOL_SIZE`      | `0`                      | Conexiones mínimas del pool (serverless: 0) |
+| `POSTGRES_MAX_POOL_SIZE`      | `3`                      | Conexiones máximas del pool (serverless: 2-3) |
+| `POSTGRES_SSL`                | `false`                  | `true` al conectar a Supabase (exige TLS) |
 | `RATE_LIMIT_REQUESTS`         | `60`                     | Requests permitidos por ventana      |
 | `RATE_LIMIT_WINDOW_SECONDS`   | `60`                     | Duración de la ventana (segundos)    |
+| `TRUST_PROXY_HEADERS`         | `false`                  | `true` en Vercel (proxy inverso)     |
 | `CORS_ORIGINS`                | `["http://localhost:3000"]` | Orígenes permitidos para CORS    |
-| `PDF_SERVICE_URL`             | `http://localhost:3001`  | URL del microservicio Puppeteer      |
+| `PDF_SERVICE_URL`             | *(vacío)*                | Puppeteer es legacy/local; vacío en producción (el front genera el PDF) |
 | `PDF_SERVICE_TIMEOUT_SECONDS` | `30`                     | Timeout para generación de PDF       |
-| `AI_SERVICE_URL`              | `http://localhost:11434` | URL del microservicio de IA (Ollama) |
-| `AI_MODEL`                    | `hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M` | Modelo IA en español |
+| `AI_SERVICE_URL`              | `http://localhost:11434` | URL del servicio de IA (Ollama local o `https://router.huggingface.co`) |
+| `HF_TOKEN`                    | *(vacío)*                | Token HF Read para el router de Inference Providers |
+| `AI_MODEL`                    | `meta-llama/Llama-3.3-70B-Instruct` | Modelo IA (nube) / NeuralQwen español (Ollama local) |
 | `AI_TIMEOUT_SECONDS`          | `120`                    | Timeout para el análisis IA          |
 | `AI_MAX_TOKENS`               | `512`                    | Límite de tokens del análisis        |
 | `LOG_LEVEL`                   | `INFO`                   | Nivel de logging                     |
@@ -403,34 +406,43 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ---
 
-## Microservicio de IA (análisis automático)
+## Análisis IA automático
 
 Genera el `ai_analysis` de cada diagnóstico (Markdown en español: resumen,
-fortalezas, áreas de mejora y recomendaciones) usando un modelo local
-**NeuralQwen-2.5-1.5B-Spanish** (GGUF Q4_K_M, ~1.1 GB) servido por **Ollama**.
+fortalezas, áreas de mejora y recomendaciones). El cliente habla **protocolo
+OpenAI-compatible** (`/v1/chat/completions`), así que funciona contra:
 
-- El modelo se descarga una sola vez al primer arranque y queda cacheado en el
-  volumen `aimodels` (compose) o `~/.ollama` (local).
-- Corre en CPU, los datos nunca salen del despliegue.
+- **Ollama local** (dev): `AI_SERVICE_URL=http://localhost:11434` con el modelo
+  `NeuralQwen-2.5-1.5B-Spanish` (GGUF Q4_K_M, ~1.1 GB) y `HF_TOKEN` vacío.
+- **Hugging Face Inference Providers** (nube): `AI_SERVICE_URL=https://router.huggingface.co`,
+  `HF_TOKEN=<token read hf_...>` y `AI_MODEL=meta-llama/Llama-3.3-70B-Instruct`.
+
 - El análisis se genera como `BackgroundTask` tras cada diagnóstico nuevo
   (no bloquea el POST); si el servicio no está disponible, se loguea y el
   `ai_analysis` queda `NULL` sin romper el flujo.
+- Se lee con `GET /api/v1/diagnostic/{id}` (campo `ai_analysis`) y el estado del
+  servicio con `GET /health/ai`.
 
-Verificar:
+Verificar en local (Ollama):
 
 ```bash
 # health del servicio (Ollama)
-curl http://localhost:11434/api/tags
+curl http://localhost:11434/v1/models
 
 # generar análisis manualmente
-curl -X POST http://localhost:11434/api/generate \
+curl -X POST http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M","prompt":"Resumen en 1 frase.","stream":false}'
+  -d '{"model":"hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M","messages":[{"role":"user","content":"Resumen en 1 frase."}],"max_tokens":100}'
 ```
 
 ---
 
-## Microservicio Puppeteer (PDF)
+## Microservicio Puppeteer (PDF) — LEGACY / solo local
+
+> **En producción el PDF lo genera el frontend** (impresión del navegador sobre
+> el HTML del reporte), así el backend no depende de un contenedor Puppeteer
+> que Vercel no puede ejecutar. Este microservicio queda solo para desarrollo
+> local; con `PDF_SERVICE_URL` vacío, `POST /report/pdf` responde **501**.
 
 Servicio Node.js independiente que convierte HTML a PDF.
 
@@ -455,6 +467,149 @@ curl -X POST http://localhost:3001/generate \
   -H "Content-Type: application/json" \
   -d '{"html":"<h1>Test</h1>","filename":"test.pdf"}'
 ```
+
+---
+
+## Despliegue en la nube (Supabase + Vercel)
+
+Stack objetivo, 100% en free tiers:
+
+| Pieza        | Servicio                          | URL de ejemplo |
+|--------------|-----------------------------------|----------------|
+| Base de datos| Supabase (Postgres + pooler)      | `db.<ref>.supabase.co:6543` |
+| Backend API  | Vercel (Función ASGI de FastAPI)  | `https://tu-app.vercel.app` |
+| Modelo IA    | Hugging Face Inference Providers | `https://router.huggingface.co` |
+| Reporte PDF  | **Frontend** (impresión navegador)| — (sin servicio en la nube) |
+
+> Notas honestas:
+> - El rate limit (`slowapi`) en Vercel es **por instancia**, no global; a nivel
+>   de demo es aceptable. Un proxy externo (Cloudflare, etc.) podría dar uno global.
+> - La primera llamada a la IA tras un *cold start* del HF Space puede tardar
+>   60–120s+ en CPU. El `BackgroundTask` degrada con gracia: si el servicio no
+>   responde, el `ai_analysis` queda `NULL` y el diagnóstico no falla.
+
+### Paso 1 — Base de datos en Supabase (free)
+
+1. Crear un proyecto en https://supabase.com (plan Free).
+2. En **SQL Editor**, ejecutar en orden:
+   ```sql
+   -- 1) DDL
+   backend/scripts/schema-v2.sql
+
+   -- 2) Seed (dataset real de telemetría NLR + preguntas)
+   backend/scripts/seed-v2.sql
+   ```
+   Compatibilidad ya verificada: `pgcrypto`, FKs, advisory locks y
+   `TRUNCATE ... CASCADE` funcionan en Supabase.
+3. Copiar la **connection string del pooler** (modo transaction):
+   `Settings → Database → Connection string → Pooler` → `URI`.
+   Formato:
+   `postgresql://postgres.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:6543/postgres`
+
+### Paso 2 — Modelo IA en Hugging Face Inference Providers (free)
+
+> Los **Spaces Docker/Gradio** hoy requieren plan PRO; la alternativa gratis es la
+> **Inference API serverless** (`https://router.huggingface.co`), compatible
+> OpenAI. No hay que desplegar nada: solo un token.
+
+1. Crear un **token Read** en https://huggingface.co/settings/tokens (empieza con `hf_`).
+2. En Vercel cargar como env vars:
+   ```
+   AI_SERVICE_URL=https://router.huggingface.co
+   HF_TOKEN=<tu-token-hf_...>
+   AI_MODEL=meta-llama/Llama-3.3-70B-Instruct
+   AI_TIMEOUT_SECONDS=120
+   AI_MAX_TOKENS=512
+   ```
+3. Verificar:
+   ```bash
+   curl -H "Authorization: Bearer $HF_TOKEN" https://router.huggingface.co/v1/models
+   # y el estado del análisis con el backend desplegado:
+   curl https://<tu-backend>.vercel.app/health/ai
+   ```
+4. (Opcional) Si querés el modelo local en vez del router, corré Ollama y apuntá
+   `AI_SERVICE_URL=http://localhost:11434` con `HF_TOKEN` vacío.
+
+### Paso 3 — Backend en Vercel (free)
+
+El repo ya trae `api/index.py` (handler ASGI) y `vercel.json` (`maxDuration` 300s).
+
+1. En https://vercel.com → **Add New → Project** → importar el repo.
+2. **Root Directory:** `backend` (el proyecto a desplegar es el backend).
+3. Framework Preset: **Other** (Vercel detecta el entrypoint `api/index.py`).
+4. Setear las **variables de entorno** (Environment Variables):
+
+   | Variable | Valor |
+   |----------|-------|
+   | `ENVIRONMENT` | `production` |
+   | `DEBUG` | `false` |
+   | `LOG_JSON` | `true` |
+   | `TRUST_PROXY_HEADERS` | `true` |
+   | `CORS_ORIGINS` | `["https://tu-front.vercel.app"]` (ajustar) |
+   | `POSTGRES_HOST` | `aws-0-<region>.pooler.supabase.com` |
+   | `POSTGRES_PORT` | `6543` |
+   | `POSTGRES_USER` | `postgres.<project-ref>` |
+   | `POSTGRES_PASSWORD` | *(password del proyecto)* |
+   | `POSTGRES_DB` | `postgres` |
+   | `POSTGRES_SSL` | `true` |
+   | `AI_SERVICE_URL` | `https://router.huggingface.co` |
+   | `HF_TOKEN` | *(token Read hf_...)* |
+   | `AI_MODEL` | `meta-llama/Llama-3.3-70B-Instruct` |
+   | `AI_TIMEOUT_SECONDS` | `120` |
+   | `PDF_SERVICE_URL` | *(vacío — el front genera el PDF)* |
+
+5. **Deploy**.
+6. Verificar:
+   ```bash
+   curl https://tu-app.vercel.app/health
+   curl https://tu-app.vercel.app/api/v1/benchmark/questions
+   ```
+
+> `POSTGRES_HOST` es el host del **pooler** (no `db.<ref>.supabase.co:5432`).
+> El puerto 6543 (modo transaction) es el que sobrevive a serverless; el pool
+> se crea por instancia con `max_size` pequeño (`statement_cache_size=0`
+> ya está seteado en `core/database.py`).
+
+#### Alternativa oficial: CLI de Vercel
+
+Igual de válida que el dashboard; esta es la vía que recomienda la skill
+oficial `deploy-to-vercel` (vercel-labs). El repo ya tiene remote GitHub, así
+que el flujo queda:
+
+```bash
+# 1) Instalar y autenticar (una sola vez)
+npm install -g vercel
+vercel login
+
+# 2) Vincular el repo a un proyecto de Vercel (root = backend/)
+cd backend
+vercel link --repo        # usa el remote GitHub (mejor que `vercel link` a secas)
+
+# 3) Deploy de prueba (preview, no producción)
+vercel deploy . -y --no-wait
+
+# 4) Producción (cuando esté todo verificado)
+vercel deploy . --prod -y --no-wait
+```
+
+- Las variables de entorno se setean una vez con `vercel env add <VARIABLE>`
+  (o en el dashboard: *Settings → Environment Variables*).
+- Una vez linkeado, **cada `git push`** a la rama de producción dispara un
+  deploy automático; los branches generan previews.
+- `--no-wait` devuelve la URL al instante; verificá el build con
+  `vercel inspect <url>`.
+
+### Paso 4 — Reporte PDF
+
+El frontend genera el PDF (botón *Imprimir / Guardar como PDF* sobre el HTML del
+reporte). Con `PDF_SERVICE_URL` vacío, `POST /report/pdf` responde 501 con un
+mensaje que apunta a esa estrategia. `puppeteer-service` queda solo para dev.
+
+### Rollback / deps
+
+- **Reset DB en Supabase:** re-ejecutar `schema-v2.sql` + `seed-v2.sql` en el
+  SQL Editor (el seed es idempotente: `TRUNCATE ... CASCADE` + `INSERT`).
+- **Re-deploy en Vercel:** cada push a la rama configurada re-despliega solo.
 
 ---
 

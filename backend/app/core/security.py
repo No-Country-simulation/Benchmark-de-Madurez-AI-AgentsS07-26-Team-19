@@ -8,13 +8,19 @@ from app.core.config import get_settings
 
 
 def generate_anon_session_id() -> str:
-    return secrets.token_urlsafe(32)
+    # token_urlsafe(24) -> 32 chars, justo el máximo de
+    # benchmark_response.anonymous_code (VARCHAR(32)).
+    return secrets.token_urlsafe(24)
 
 
 def get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # Solo confiar en X-Forwarded-For si corremos detrás de un proxy inverso
+    # de confianza (TRUST_PROXY_HEADERS=true). En local, cualquier cliente
+    # puede falsificar ese header y eludir el rate limit.
+    if get_settings().trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     return get_remote_address(request)
 
 

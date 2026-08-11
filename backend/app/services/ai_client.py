@@ -1,9 +1,11 @@
-"""HTTP client for the local AI analysis service (Ollama).
+"""HTTP client para el servicio de análisis IA.
 
 Genera el análisis cualitativo (``ai_analysis``) de un diagnóstico a partir de
-los scores por dimensión. Usa un modelo local en español
-(NeuralQwen-2.5-1.5B-Spanish) servido por Ollama, por lo que los datos nunca
-salen del despliegue.
+los scores por dimensión. Habla el protocolo **OpenAI-compatible**
+(``/v1/chat/completions`` y ``/v1/models``), que funciona tanto con un Ollama
+local/cloud como con el router serverless de Hugging Face Inference Providers
+(``https://router.huggingface.co``). Si ``hf_token`` está vacío, no se manda
+cabecera de autorización (caso Ollama local).
 
 Prompt: se le pasa un bloque JSON con los scores + contexto fijo de las 5
 dimensiones del benchmark, y el modelo devuelve el análisis en Markdown.
@@ -38,9 +40,16 @@ Sé concreto y usa los números del diagnóstico. No inventes datos."""
 class AiClient:
     def __init__(self, settings: Settings) -> None:
         self.base_url = settings.ai_service_url.rstrip("/")
+        self.api_key = settings.hf_token
         self.model = settings.ai_model
         self.timeout = settings.ai_timeout_seconds
         self.max_tokens = settings.ai_max_tokens
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def analyze(
         self,
@@ -59,22 +68,29 @@ class AiClient:
 
         body = {
             "model": self.model,
-            "system": SYSTEM_PROMPT,
-            "prompt": user_prompt,
-            "stream": False,
-            "options": {
-                "num_predict": self.max_tokens,
-                "temperature": 0.4,
-                "top_p": 0.9,
-            },
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": self.max_tokens,
+            "temperature": 0.4,
+            "top_p": 0.9,
         }
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(f"{self.base_url}/api/generate", json=body)
+            response = await client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=body,
+                headers=self._headers(),
+            )
             response.raise_for_status()
             data = response.json()
 
-        text = (data.get("response") or "").strip()
+        try:
+            content = data["choices"][0]["message"]["content"]
+            text = str(content).strip()
+        except (KeyError, IndexError, TypeError):
+            raise ValueError("AI service returned an empty analysis")
         if not text:
             raise ValueError("AI service returned an empty analysis")
         return text
@@ -82,7 +98,9 @@ class AiClient:
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
+                response = await client.get(
+                    f"{self.base_url}/v1/models", headers=self._headers()
+                )
                 return response.status_code == 200
         except httpx.HTTPError as exc:
             logger.warning("ai_service_unavailable", error=str(exc))

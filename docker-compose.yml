@@ -4,14 +4,13 @@ services:
     container_name: nlr-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nlr
-      POSTGRES_PASSWORD: nlr_secret
-      POSTGRES_DB: nlr_diagnostic
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-nlr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nlr_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-nlr_diagnostic}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./backend/scripts/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./backend/scripts/schema-v2.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./backend/scripts/seed-v2.sql:/docker-entrypoint-initdb.d/02-seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nlr -d nlr_diagnostic"]
       interval: 5s
@@ -22,57 +21,42 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: nlr-api:latest
     container_name: nlr-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
-      POSTGRES_USER: nlr
-      POSTGRES_PASSWORD: nlr_secret
-      POSTGRES_DB: nlr_diagnostic
+      POSTGRES_USER: ${POSTGRES_USER:-nlr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nlr_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-nlr_diagnostic}
       PDF_SERVICE_URL: http://puppeteer:3001
-      DEBUG: "true"
-      LOG_JSON: "false"
-      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+      PDF_SERVICE_TIMEOUT_SECONDS: ${PDF_SERVICE_TIMEOUT_SECONDS:-30}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-https://router.huggingface.co}
+      HF_TOKEN: ${HF_TOKEN:-}
+      AI_MODEL: ${AI_MODEL:-meta-llama/Llama-3.3-70B-Instruct}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      LOG_JSON: ${LOG_JSON:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
     depends_on:
       db:
         condition: service_healthy
       puppeteer:
         condition: service_started
-    volumes:
-      - ./backend/app:/app/app
 
   puppeteer:
     build:
       context: ./backend/puppeteer-service
       dockerfile: Dockerfile
+    image: nlr-puppeteer:latest
     container_name: nlr-puppeteer
     restart: unless-stopped
-    ports:
-      - "3001:3001"
     environment:
       PORT: 3001
     shm_size: "1gb"
-
-  seed:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: nlr-seed
-    environment:
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: nlr
-      POSTGRES_PASSWORD: nlr_secret
-      POSTGRES_DB: nlr_diagnostic
-    depends_on:
-      db:
-        condition: service_healthy
-    command: python scripts/seed_nlr.py
-    profiles:
-      - seed
 
 volumes:
   pgdata:

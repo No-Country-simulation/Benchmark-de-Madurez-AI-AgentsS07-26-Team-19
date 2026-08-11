@@ -1,0 +1,25 @@
+# Override para desarrollo local — docker compose la fusiona automáticamente.
+# Para producción: docker compose up -d --build (sin este file, usar -f base).
+# Uso dev: docker compose -f docker-compose.yml -f docker-compose.override.yml up
+services:
+  db:
+    ports:
+      - "5432:5432" # solo en dev: acceso al cliente Postgres local
+
+  puppeteer:
+    ports:
+      - "3001:3001" # solo en dev: la API corre en el host y usa localhost:3001
+
+  ai:
+    ports:
+      - "11434:11434" # solo en dev: la API corre en el host y usa localhost:11434
+
+  api:
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_JSON: "false"
+    volumes:
+      - ./backend/app:/app/app
+    ports:
+      - "8000:8000"

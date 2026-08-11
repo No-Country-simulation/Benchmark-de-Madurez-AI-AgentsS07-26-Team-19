@@ -1,0 +1,25 @@
+# Artefactos de desarrollo (no aplican al runtime serverless)
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Entornos y secretos
+.env
+.env.local
+*.env
+!.env.example
+
+# Tests, datos y microservicios que no se despliegan
+tests/
+scripts/
+puppeteer-service/
+
+# Docs/build local
+README.md
+Dockerfile
+.dockerignore

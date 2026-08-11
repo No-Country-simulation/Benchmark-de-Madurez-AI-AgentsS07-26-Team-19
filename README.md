@@ -29,16 +29,16 @@ The delivered MVP is the **NLR Diagnostic Backend**: a FastAPI API for leadershi
 
 - **Benchmark engine** — evaluates diagnostic answers against a reference dataset
 - **Scoring in 5 dimensions**:
-  - `strategic_thinking` — Strategic thinking
-  - `execution` — Execution
-  - `leadership` — Leadership
-  - `innovation` — Innovation
-  - `collaboration` — Collaboration
-- **Percentile calculation** — precomputed percentile buckets with lookup endpoint
-- **Dynamic rebalancing** — weights are rebalanced per dimension based on the population
+  - `visibility` — Unified real-time visibility across power, cooling and workloads
+  - `friction` — Identifying the interface where capacity is lost
+  - `latency` — Speed of cooling/power adjustment to workload changes
+  - `quantification` — Knowledge of the facility's own stranded capacity
+  - `blockers` — Organizational or technical blockers preventing resolution
+- **Percentile calculation** — on-the-fly percentiles blending public + real populations
+- **Dynamic rebalancing** — public/real weights rebalanced after each new diagnostic
 - **PDF report generation** — HTML to PDF via an independent **Puppeteer** microservice
 - **Docker Compose** orchestration — database, API and PDF service in one command
-- **Seeded dataset** — 10 benchmark questions and 1000 reference scores via `seed_nlr.py`
+- **Seeded dataset** — 15 benchmark questions and 20 public reference rows via `seed-v2.sql`
 
 ## Tech Stack
 
@@ -68,7 +68,7 @@ The delivered MVP is the **NLR Diagnostic Backend**: a FastAPI API for leadershi
 
 - **API** — `backend/app` (FastAPI, asyncpg, pydantic-settings, rate limiting, structured logging)
 - **PDF service** — `backend/puppeteer-service` (Node.js + Puppeteer, port 3001)
-- **Database** — PostgreSQL 16 with precomputed percentile buckets; schema auto-applied in Docker via `docker-entrypoint-initdb.d`
+- **Database** — PostgreSQL 16 with on-the-fly percentile computation; schema + seed auto-applied in Docker via `docker-entrypoint-initdb.d`
 
 ## API Endpoints
 
@@ -93,8 +93,9 @@ Interactive docs at `http://localhost:8000/docs` once running.
 
 ```bash
 docker compose up -d --build
-docker compose --profile seed run --rm seed   # seed the NLR dataset
 ```
+
+The schema v2 and seed are applied automatically on first boot (via `/docker-entrypoint-initdb.d/`). Reset with `docker compose down -v`.
 
 Services: `db` (5432) · `api` (8000) · `puppeteer` (3001)
 
@@ -106,8 +107,8 @@ python -m venv .venv && .\.venv\Scripts\Activate.ps1   # Windows
 pip install -r requirements.txt
 copy .env.example .env
 # create PostgreSQL user + database (see backend/README.md)
-psql -U nlr -d nlr_diagnostic -f scripts/schema.sql
-python scripts/seed_nlr.py
+psql -U nlr -d nlr_diagnostic -f scripts/schema-v2.sql
+psql -U nlr -d nlr_diagnostic -f scripts/seed-v2.sql
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -148,16 +149,16 @@ El MVP entregado es el **Backend de Diagnóstico NLR**: una API FastAPI para dia
 
 - **Motor de benchmark** — evalúa las respuestas del diagnóstico contra un dataset de referencia
 - **Scoring en 5 dimensiones**:
-  - `visibilidad_cross_layer` — Vista unificada de energía, cooling y workloads
-  - `atribucion_friccion` — Identificación de la interfaz con más pérdida de capacidad
-  - `latencia_coordinacion` — Velocidad de ajuste de cooling y energía ante workload
-  - `auto_cuantificacion` — Conocimiento de la stranded capacity propia
-  - `bloqueantes` — Obstáculos organizacionales o técnicos para resolver el problema
-- **Cálculo de percentiles** — buckets precalculados con endpoint de consulta
-- **Rebalanceo dinámico** — los pesos se rebalancean por dimensión según la población
+  - `visibility` — Vista unificada de energía, cooling y workloads
+  - `friction` — Identificación de la interfaz con más pérdida de capacidad
+  - `latency` — Velocidad de ajuste de cooling y energía ante workload
+  - `quantification` — Conocimiento de la stranded capacity propia
+  - `blockers` — Obstáculos organizacionales o técnicos para resolver el problema
+- **Cálculo de percentiles** — percentiles en vuelo que mezclan población pública + real
+- **Rebalanceo dinámico** — los pesos público/real se rebalancean tras cada diagnóstico nuevo
 - **Generación de reportes PDF** — HTML a PDF vía un microservicio independiente de **Puppeteer**
 - **Orquestación con Docker Compose** — base de datos, API y servicio PDF con un solo comando
-- **Dataset sembrado** — 10 preguntas del benchmark y 1000 scores de referencia vía `seed_nlr.py`
+- **Dataset sembrado** — 15 preguntas del benchmark y 20 filas de referencia pública vía `seed-v2.sql`
 
 ## Stack Tecnológico
 
@@ -187,7 +188,7 @@ El MVP entregado es el **Backend de Diagnóstico NLR**: una API FastAPI para dia
 
 - **API** — `backend/app` (FastAPI, asyncpg, pydantic-settings, rate limiting, logging estructurado)
 - **Servicio PDF** — `backend/puppeteer-service` (Node.js + Puppeteer, puerto 3001)
-- **Base de datos** — PostgreSQL 16 con buckets de percentiles precalculados; el schema se aplica automáticamente en Docker vía `docker-entrypoint-initdb.d`
+- **Base de datos** — PostgreSQL 16 con percentiles calculados en vuelo; el schema y el seed v2 se aplican automáticamente en Docker vía `docker-entrypoint-initdb.d`
 
 ## Endpoints de la API
 
@@ -213,8 +214,9 @@ Documentación interactiva en `http://localhost:8000/docs` una vez corriendo.
 
 ```bash
 docker compose up -d --build
-docker compose --profile seed run --rm seed   # sembrar el dataset NLR
 ```
+
+El schema v2 y el seed se aplican automáticamente al primer arranque (vía `/docker-entrypoint-initdb.d/`). Reset con `docker compose down -v`.
 
 Servicios: `db` (5432) · `api` (8000) · `puppeteer` (3001)
 
@@ -226,8 +228,8 @@ python -m venv .venv && .\.venv\Scripts\Activate.ps1   # Windows
 pip install -r requirements.txt
 copy .env.example .env
 # crear usuario y base de datos de PostgreSQL (ver backend/README.md)
-psql -U nlr -d nlr_diagnostic -f scripts/schema.sql
-python scripts/seed_nlr.py
+psql -U nlr -d nlr_diagnostic -f scripts/schema-v2.sql
+psql -U nlr -d nlr_diagnostic -f scripts/seed-v2.sql
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 

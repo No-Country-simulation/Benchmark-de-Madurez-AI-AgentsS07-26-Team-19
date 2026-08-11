@@ -1,8 +1,9 @@
 import base64
 
 import asyncpg
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.core.config import Settings, get_settings
 from app.core.dimensions import DIMENSION_SCORE_COLUMN
 from app.core.logging import get_logger
 from app.core.security import RATE_LIMIT, limiter
@@ -65,8 +66,18 @@ async def generate_pdf_report(
     request: Request,
     payload: ReportPdfRequest,
     pool: DbPool,
-    pdf_client: PdfClientDep,
+    settings: Settings = Depends(get_settings),
+    pdf_client: PdfClientDep = None,  # type: ignore[assignment]
 ) -> ReportPdfResponse:
+    if not settings.pdf_service_url:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "PDF generation is done client-side by the frontend "
+                "(browser print); no PDF service is configured."
+            ),
+        )
+
     diagnostic = await benchmark_engine.get_diagnostic_by_id(pool, payload.diagnostic_id)
     if not diagnostic:
         raise HTTPException(
