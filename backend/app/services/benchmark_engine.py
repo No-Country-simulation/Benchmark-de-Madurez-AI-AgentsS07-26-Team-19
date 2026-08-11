@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import asyncpg
 
+from app.core.dimensions import DIMENSION_SCORE_COLUMN, normalize_answer
 from app.models.schemas import (
     BenchmarkQuestion,
     DiagnosticAnswer,
@@ -165,11 +166,13 @@ async def save_diagnostic(
             response_id,
             answer.question_id,
             str(answer.value),
-            (answer.value / 5) * 100,
+            normalize_answer(answer.value),
         )
 
-    # 3) Guarda el resultado (benchmark_result)
-    scores_map = {ds.dimension.value: ds.score for ds in dimension_scores}
+    # 3) Guarda el resultado (benchmark_result) — columnas derivadas del
+    #    mapeo unico de dimensiones (app/core/dimensions.py)
+    scores_map = {ds.dimension: ds.score for ds in dimension_scores}
+    dim_scores = [scores_map.get(dim, 0.00) for dim in DIMENSION_SCORE_COLUMN]
     await conn.execute(
         """
         INSERT INTO benchmark_result (
@@ -180,11 +183,7 @@ async def save_diagnostic(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         """,
         response_id,
-        scores_map.get("visibility", 0.00),
-        scores_map.get("friction", 0.00),
-        scores_map.get("latency", 0.00),
-        scores_map.get("quantification", 0.00),
-        scores_map.get("blockers", 0.00),
+        *dim_scores,
         overall_score,
         overall_percentile,
     )
@@ -249,3 +248,24 @@ async def save_diagnostic_idempotent(
                 created_at=datetime.now(UTC),
                 replayed=False,
             )
+
+
+async def update_ai_analysis(
+    pool: asyncpg.Pool,
+    response_id: int,
+    ai_analysis: str,
+) -> None:
+    """Persiste el análisis IA en ``benchmark_result.ai_analysis``.
+
+    Corre como BackgroundTask tras el diagnóstico para no bloquear la
+    respuesta del POST; es idempotente (UPDATE por response_id).
+    """
+    await pool.execute(
+        """
+        UPDATE benchmark_result
+        SET ai_analysis = $2
+        WHERE response_id = $1
+        """,
+        response_id,
+        ai_analysis,
+    )

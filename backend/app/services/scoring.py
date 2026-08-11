@@ -2,14 +2,13 @@
 
 from collections import defaultdict
 
+from app.core.dimensions import ORDERED_DIMENSIONS, normalize_answer
 from app.models.schemas import DiagnosticAnswer, Dimension, DimensionScore
-
-DIMENSIONS = list(Dimension)
 
 
 def compute_dimension_scores(
     answers: list[DiagnosticAnswer],
-    question_dimensions: dict[int, Dimension],   # ← AHORA SÍ, int
+    question_dimensions: dict[int, Dimension],
 ) -> list[DimensionScore]:
     """Agrupa respuestas por dimensión en escala 0-100.
 
@@ -18,16 +17,16 @@ def compute_dimension_scores(
     totals: dict[Dimension, list[int]] = defaultdict(list)
 
     for answer in answers:
-        dimension = question_dimensions.get(answer.question_id)  # key = int
+        dimension = question_dimensions.get(answer.question_id)
         if dimension:
             totals[dimension].append(answer.value)
 
     scores: list[DimensionScore] = []
-    for dimension in DIMENSIONS:
+    for dimension in ORDERED_DIMENSIONS:
         values = totals.get(dimension, [])
         if values:
             avg = sum(values) / len(values)
-            score = round((avg / 5) * 100, 2)
+            score = round(normalize_answer(avg), 2)
         else:
             score = 0.0
         scores.append(DimensionScore(dimension=dimension, score=score))

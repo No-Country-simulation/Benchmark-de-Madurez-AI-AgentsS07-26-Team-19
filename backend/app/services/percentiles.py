@@ -8,6 +8,7 @@ score falls. No precomputed cache table is used.
 Design:
     - weighted_merge(): pure function, blends two score lists by weight.
     - calculate_percentile(): pure function, rank of a score in a list.
+    - _load_blendedscores(): shared DB orchestration (no more duplication).
     - calculate_percentiles_for_user(): DB orchestration per dimension.
 """
 
@@ -16,15 +17,8 @@ import random
 
 import asyncpg
 
-# Maps the short dimension name to the fixed column in public_dataset / benchmark_result
-DIMENSION_COLUMN = {
-    "visibility": "visibility_score",
-    "friction": "friction_score",
-    "latency": "latency_score",
-    "quantification": "quantification_score",
-    "blockers": "blockers_score",
-}
-
+from app.core.dimensions import DIMENSION_SCORE_COLUMN
+from app.models.schemas import Dimension
 
 # ---------------------------------------------------------------------------
 # Pure functions (no database) — these never change
@@ -75,7 +69,7 @@ def compute_percentile_thresholds(
 
     sorted_scores = sorted(scores)
     n = len(sorted_scores)
-    thresholds = {}
+    thresholds: dict[float, float] = {}
 
     for p in percentiles:
         index = int(math.ceil(p / 100 * n)) - 1
@@ -86,23 +80,29 @@ def compute_percentile_thresholds(
 
 
 # ---------------------------------------------------------------------------
-# Database helpers (v2 schema)
+# Database helpers (v2 schema) — shared, no duplication
 # ---------------------------------------------------------------------------
 
-async def _get_public_scores(pool: asyncpg.Pool, column: str) -> list[float]:
-    """All public reference scores for one dimension column."""
-    rows = await pool.fetch(
+async def _load_blended_scores(
+    pool: asyncpg.Pool,
+    column: str,
+    public_weight: float,
+    real_weight: float,
+) -> list[float]:
+    """Merge public + real scores for one dimension column, weighted.
+
+    Shared by every public percentile function so the fetch+merge orchestration
+    lives in exactly one place.
+    """
+    public_rows = await pool.fetch(
         f"SELECT {column} AS score FROM public_dataset WHERE {column} IS NOT NULL"
     )
-    return [float(r["score"]) for r in rows]
-
-
-async def _get_real_scores(pool: asyncpg.Pool, column: str) -> list[float]:
-    """All real submission scores for one dimension column."""
-    rows = await pool.fetch(
+    real_rows = await pool.fetch(
         f"SELECT {column} AS score FROM benchmark_result WHERE {column} IS NOT NULL"
     )
-    return [float(r["score"]) for r in rows]
+    public_scores = [float(r["score"]) for r in public_rows]
+    real_scores = [float(r["score"]) for r in real_rows]
+    return weighted_merge(public_scores, real_scores, public_weight, real_weight)
 
 
 # ---------------------------------------------------------------------------
@@ -112,56 +112,54 @@ async def _get_real_scores(pool: asyncpg.Pool, column: str) -> list[float]:
 async def calculate_percentiles_for_user(
     pool: asyncpg.Pool,
     dimension_scores: dict[str, float],
-    public_weight: float = 0.7,
-    real_weight: float = 0.3,
+    public_weight: float,
+    real_weight: float,
 ) -> dict[str, float]:
     """Percentile per dimension, blending public + real datasets on the fly.
+
+    The blending weights MUST come from the current rebalancing state
+    (``app.services.rebalancing.get_current_weights``) so that percentiles and
+    the displayed ``pesos`` stay consistent.
 
     Args:
         pool: asyncpg pool.
         dimension_scores: {'visibility': 70.0, 'friction': 50.0, ...}.
-        public_weight / real_weight: blending weights (sum to 1).
+        public_weight / real_weight: blending weights (must sum to 1).
 
     Returns:
         {'visibility': 65.0, 'friction': 40.0, ...} — percentile per dimension.
     """
     percentiles: dict[str, float] = {}
 
-    for dim, column in DIMENSION_COLUMN.items():
-        public_scores = await _get_public_scores(pool, column)
-        real_scores = await _get_real_scores(pool, column)
-        merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
-        user_score = dimension_scores.get(dim, 0.0)
-        percentiles[dim] = calculate_percentile(user_score, merged)
+    for dimension, column in DIMENSION_SCORE_COLUMN.items():
+        merged = await _load_blended_scores(pool, column, public_weight, real_weight)
+        user_score = dimension_scores.get(dimension.value, 0.0)
+        percentiles[dimension.value] = calculate_percentile(user_score, merged)
 
     return percentiles
 
 
 async def get_percentile(
     pool: asyncpg.Pool,
-    dimension: str,
+    dimension: Dimension,
     score: float,
-    public_weight: float = 0.7,
-    real_weight: float = 0.3,
+    public_weight: float,
+    real_weight: float,
 ) -> float:
     """Convenience: percentile for ONE dimension (on the fly)."""
-    column = DIMENSION_COLUMN[dimension]
-    public_scores = await _get_public_scores(pool, column)
-    real_scores = await _get_real_scores(pool, column)
-    merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
+    column = DIMENSION_SCORE_COLUMN[dimension]
+    merged = await _load_blended_scores(pool, column, public_weight, real_weight)
     return calculate_percentile(score, merged)
 
 
 async def get_all_percentiles(
     pool: asyncpg.Pool,
-    public_weight: float = 0.7,
-    real_weight: float = 0.3,
-) -> dict[str, dict]:
+    public_weight: float,
+    real_weight: float,
+) -> dict[str, dict[float, float]]:
     """Percentile thresholds for every dimension (for stats endpoints)."""
-    result: dict[str, dict] = {}
-    for dim, column in DIMENSION_COLUMN.items():
-        public_scores = await _get_public_scores(pool, column)
-        real_scores = await _get_real_scores(pool, column)
-        merged = weighted_merge(public_scores, real_scores, public_weight, real_weight)
-        result[dim] = compute_percentile_thresholds(merged)
+    result: dict[str, dict[float, float]] = {}
+    for dimension, column in DIMENSION_SCORE_COLUMN.items():
+        merged = await _load_blended_scores(pool, column, public_weight, real_weight)
+        result[dimension.value] = compute_percentile_thresholds(merged)
     return result

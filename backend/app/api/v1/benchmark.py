@@ -11,13 +11,14 @@ poblaciones grandes convendría revisitar si se necesita cache. Por ahora,
 20 filas públicas es trivial.
 """
 
-import asyncpg
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 
+from app.core.dimensions import DIMENSION_SCORE_COLUMN, NAME_TO_DIMENSION
 from app.core.security import RATE_LIMIT, limiter
-from app.deps import get_db
+from app.deps import DbPool
 from app.models.schemas import (
     BenchmarkQuestion,
+    BenchmarkStats,
     PercentileLookupRequest,
     PercentileLookupResponse,
     WeightsResponse,
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/benchmark", tags=["benchmark"])
 @limiter.limit(RATE_LIMIT)
 async def list_questions(
     request: Request,
-    pool: asyncpg.Pool = Depends(get_db),
+    pool: DbPool,
 ) -> list[BenchmarkQuestion]:
     """Devuelve las preguntas ACTIVAS del benchmark (v2: tabla `question`).
 
@@ -47,6 +48,7 @@ async def list_questions(
 
 @router.get(
     "/stats",
+    response_model=list[BenchmarkStats],
     summary="Get population statistics per dimension",
     description="Returns mean, standard deviation, and sample size per dimension "
     "from public dataset and real submissions.",
@@ -54,8 +56,8 @@ async def list_questions(
 @limiter.limit(RATE_LIMIT)
 async def get_stats(
     request: Request,
-    pool: asyncpg.Pool = Depends(get_db),
-) -> list[dict[str, float | int]]:
+    pool: DbPool,
+) -> list[BenchmarkStats]:
     """Estadísticas (media, desviación, n) por dimensión del pool fundido.
 
     v2: en vez de leer `benchmark_scores` (que no existe), hace un UNION de
@@ -64,36 +66,35 @@ async def get_stats(
     NOTA FUTURA: si el frontend quiere stats separadas público/real, habría
     que agregar un filtro source — hoy se mezclan ambas en un solo conjunto.
     """
+    select_blocks = []
+    for dimension, column in DIMENSION_SCORE_COLUMN.items():
+        select_blocks.append(
+            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM public_dataset"
+        )
+        select_blocks.append(
+            f"SELECT '{dimension.value}' AS dim, {column} AS score FROM benchmark_result"
+        )
+    union_sql = "\nUNION ALL\n".join(select_blocks)
+
     rows = await pool.fetch(
-        """
+        f"""
         SELECT dim AS dimension,
                AVG(score)    AS mean,
                STDDEV(score) AS std_dev,
                COUNT(*)      AS sample_size
-        FROM (
-            SELECT 'visibility' AS dim, visibility_score      AS score FROM public_dataset
-            UNION ALL SELECT 'friction', friction_score       FROM public_dataset
-            UNION ALL SELECT 'latency', latency_score         FROM public_dataset
-            UNION ALL SELECT 'quantification', quantification_score FROM public_dataset
-            UNION ALL SELECT 'blockers', blockers_score       FROM public_dataset
-            UNION ALL SELECT 'visibility', visibility_score   FROM benchmark_result
-            UNION ALL SELECT 'friction', friction_score       FROM benchmark_result
-            UNION ALL SELECT 'latency', latency_score         FROM benchmark_result
-            UNION ALL SELECT 'quantification', quantification_score FROM benchmark_result
-            UNION ALL SELECT 'blockers', blockers_score       FROM benchmark_result
-        ) t
+        FROM ({union_sql}) t
         WHERE score IS NOT NULL
         GROUP BY dim
         ORDER BY dim
         """
     )
     return [
-        {
-            "dimension": row["dimension"],
-            "mean": round(float(row["mean"]), 2),
-            "std_dev": round(float(row["std_dev"] or 0), 2),
-            "sample_size": row["sample_size"],
-        }
+        BenchmarkStats(
+            dimension=NAME_TO_DIMENSION[row["dimension"]],
+            mean=round(float(row["mean"]), 2),
+            std_dev=round(float(row["std_dev"] or 0), 2),
+            sample_size=row["sample_size"],
+        )
         for row in rows
     ]
 
@@ -105,14 +106,20 @@ async def get_stats(
 @limiter.limit(RATE_LIMIT)
 async def list_percentiles(
     request: Request,
-    pool: asyncpg.Pool = Depends(get_db),
-) -> dict[str, dict[str, float]]:
+    pool: DbPool,
+) -> dict[str, dict[float, float]]:
     """Devuelve umbrales de percentil (P10..P99) por dimensión (en vuelo).
+
+    Usa los pesos VIGENTES del rebalanceo para el blend público + real, así
+    el resultado es consistente con `/weights` y con `/diagnostic`.
 
     NOTA FUTURA: con datos crecientes, este endpoint es candidato a cache
     porque recalcula el blend en cada llamada.
     """
-    return await percentiles.get_all_percentiles(pool)
+    weights = await get_current_weights(pool)
+    return await percentiles.get_all_percentiles(
+        pool, weights.public_weight, weights.real_weight
+    )
 
 
 @router.post(
@@ -124,15 +131,16 @@ async def list_percentiles(
 async def lookup_percentile(
     request: Request,
     payload: PercentileLookupRequest,
-    pool: asyncpg.Pool = Depends(get_db),
+    pool: DbPool,
 ) -> PercentileLookupResponse:
-    """Da el percentil de un score concreto dentro de una dimensión (en vuelo).
-
-    payload.dimension es un Enum Dimension; lo pasamos como .value (str)
-    porque percentiles.get_percentile() espera el nombre corto.
-    """
+    """Da el percentil de un score concreto dentro de una dimensión (en vuelo)."""
+    weights = await get_current_weights(pool)
     percentile = await percentiles.get_percentile(
-        pool, payload.dimension.value, payload.score
+        pool,
+        payload.dimension,
+        payload.score,
+        weights.public_weight,
+        weights.real_weight,
     )
     return PercentileLookupResponse(
         dimension=payload.dimension,
@@ -154,16 +162,11 @@ async def lookup_percentile(
 @limiter.limit(RATE_LIMIT)
 async def get_weights(
     request: Request,
-    pool: asyncpg.Pool = Depends(get_db),
+    pool: DbPool,
 ) -> WeightsResponse:
     """Lee el estado vigente del rebalanceo (tabla single-row rebalance_config).
 
     Fallback: si aún no hubo respuesta real, devuelve 100% público.
     """
     data = await get_current_weights(pool)
-    return WeightsResponse(
-        public_weight=data["public_weight"],
-        real_weight=data["real_weight"],
-        real_count=data["real_count"],
-        updated_at=data["updated_at"],
-    )
+    return WeightsResponse.from_state(data)

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -92,6 +92,22 @@ class ErrorResponse(BaseModel):
 
 # --- V2 schemas for enriched diagnostic response (issue #26) ---
 
+class WeightsStateProtocol(Protocol):
+    """Structural duck-typing of the weights state produced by the rebalancing service."""
+
+    @property
+    def public_weight(self) -> float: ...
+
+    @property
+    def real_weight(self) -> float: ...
+
+    @property
+    def real_count(self) -> int: ...
+
+    @property
+    def updated_at(self) -> datetime | None: ...
+
+
 class WeightsResponse(BaseModel):
     """Current blending weights between public seed data and real submissions."""
 
@@ -99,6 +115,16 @@ class WeightsResponse(BaseModel):
     real_weight: float = Field(ge=0, le=1)
     real_count: int = Field(ge=0)
     updated_at: datetime | None = None
+
+    @classmethod
+    def from_state(cls, state: WeightsStateProtocol) -> "WeightsResponse":
+        """Build from a ``WeightsState`` (rebalancing service) without coupling schemas to it."""
+        return cls(
+            public_weight=state.public_weight,
+            real_weight=state.real_weight,
+            real_count=state.real_count,
+            updated_at=state.updated_at,
+        )
 
 
 class DiagnosticFrictionProfile(BaseModel):

@@ -35,14 +35,6 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def database_url(self) -> str:
-        return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
     def async_database_url(self) -> str:
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
@@ -58,6 +50,12 @@ class Settings(BaseSettings):
     # Puppeteer PDF service
     pdf_service_url: str = "http://localhost:3001"
     pdf_service_timeout_seconds: int = 30
+
+    # AI analysis service (Ollama)
+    ai_service_url: str = "http://localhost:11434"
+    ai_model: str = "hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M"
+    ai_timeout_seconds: int = 120
+    ai_max_tokens: int = 512
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

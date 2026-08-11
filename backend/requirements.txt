@@ -1,4 +1,4 @@
-# Core
+# Runtime dependencies — installados en la imagen de producción
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
@@ -15,10 +15,3 @@ httpx>=0.28.0
 
 # Logging
 structlog>=24.4.0
-
-# Dev / testing
-pytest>=8.3.0
-pytest-asyncio>=0.24.0
-pytest-cov>=6.0.0
-ruff>=0.8.0
-mypy>=1.13.0

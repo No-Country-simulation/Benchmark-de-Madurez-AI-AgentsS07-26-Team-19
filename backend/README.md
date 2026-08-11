@@ -57,6 +57,7 @@ Monorepo con backend y frontend (este último se agregará en el mismo repositor
 │   │   ├── core/
 │   │   │   ├── config.py        # Settings (pydantic-settings)
 │   │   │   ├── database.py      # asyncpg pool
+│   │   │   ├── dimensions.py    # Fuente única de las 5 dimensiones
 │   │   │   ├── security.py      # Rate limiting, anon session
 │   │   │   └── logging.py       # Structured logging
 │   │   ├── models/
@@ -66,6 +67,7 @@ Monorepo con backend y frontend (este último se agregará en el mismo repositor
 │   │   │   ├── scoring.py
 │   │   │   ├── percentiles.py
 │   │   │   ├── rebalancing.py
+│   │   │   ├── idempotency.py
 │   │   │   └── pdf_client.py
 │   │   ├── api/v1/
 │   │   │   ├── diagnostic.py
@@ -73,9 +75,10 @@ Monorepo con backend y frontend (este último se agregará en el mismo repositor
 │   │   │   └── report.py
 │   │   └── deps.py
 │   ├── puppeteer-service/       # Microservicio Node + Puppeteer
+│   ├── ai-service/              # Microservicio de IA (Ollama + NeuralQwen español)
 │   ├── scripts/
-│   │   ├── schema.sql
-│   │   └── seed_nlr.py
+│   │   ├── schema-v2.sql        # DDL v2 (FKS, checks, TIMESTAMPTZ)
+│   │   └── seed-v2.sql          # Seed idempotente (15 preguntas + 20 filas públicas)
 │   ├── tests/
 │   ├── Dockerfile
 │   ├── pyproject.toml
@@ -171,33 +174,30 @@ GRANT ALL PRIVILEGES ON DATABASE nlr_diagnostic TO nlr;
 \q
 ```
 
-#### 5.3 Aplicar el schema
+#### 5.3 Aplicar el schema v2
 
 Desde el directorio `backend/`:
 
 ```bash
-psql -U nlr -d nlr_diagnostic -f scripts/schema.sql
+psql -U nlr -d nlr_diagnostic -f scripts/schema-v2.sql
 ```
 
 Si te pide contraseña, usa `nlr_secret` (o la que hayas configurado).
 
-#### 5.4 Seed del dataset NLR
-
-Con el entorno virtual activo:
+#### 5.4 Seed del dataset
 
 ```bash
-python scripts/seed_nlr.py
+psql -U nlr -d nlr_diagnostic -f scripts/seed-v2.sql
 ```
 
 Deberías ver:
 
 ```
-Seeding NLR dataset...
-  ✓ Seeded 10 questions
-  ✓ Seeded 1000 benchmark scores
-  ✓ Seeded percentile buckets
-Done.
+preguntas        15
+public_dataset   20
 ```
+
+El seed es idempotente: re-ejecutarlo limpia (TRUNCATE) y recarga sin duplicar.
 
 ### Paso 6 — Instalar microservicio Puppeteer
 
@@ -285,16 +285,15 @@ Esto levanta:
 | `db`        | 5432   | PostgreSQL 16                  |
 | `api`       | 8000   | FastAPI                        |
 | `puppeteer` | 3001   | Generación PDF                 |
+| `ai`        | 11434  | Análisis IA (Ollama)           |
 
-El schema SQL se aplica automáticamente al crear el contenedor de PostgreSQL (via `/docker-entrypoint-initdb.d/`).
+El schema v2 y el seed se aplican automáticamente al crear el contenedor de PostgreSQL (via `/docker-entrypoint-initdb.d/`), en orden: `01-schema.sql` → `02-seed.sql`.
 
-### Paso 4 — Seed del dataset
+> **Nota:** el servicio `ai` descarga el modelo (~1.1 GB) la primera vez que se
+> levanta; puede tardar unos minutos. El análisis IA se genera en background,
+> así que la API responde igual aunque el modelo aún se esté descargando.
 
-```bash
-docker compose --profile seed run --rm seed
-```
-
-### Paso 5 — Verificar
+### Paso 4 — Verificar
 
 ```bash
 curl http://localhost:8000/health
@@ -310,7 +309,7 @@ docker compose logs -f api
 # Detener todo
 docker compose down
 
-# Detener y borrar volúmenes (reset DB)
+# Detener y borrar volúmenes (reset DB: schema + seed se re-aplican al arrancar)
 docker compose down -v
 
 # Reconstruir solo la API
@@ -321,26 +320,26 @@ docker compose up -d --build api
 
 ## Configuración de la base de datos
 
-### Tablas principales
+### Tablas principales (esquema v2)
 
 | Tabla                   | Propósito                                                        |
 |-------------------------|------------------------------------------------------------------|
-| `benchmark_questions`   | Preguntas del diagnóstico por dimensión                          |
-| `benchmark_scores`      | Scores de la población de referencia (pública + real)            |
-| `benchmark_percentiles` | Buckets precalculados de percentiles                             |
-| `benchmark_weights`     | Pesos dinámicos por dimensión (actualizados por rebalanceo)      |
-| `rebalancing_config`    | Historial de pesos público/real por conteo de respuestas reales  |
-| `diagnostics`           | Resultados de diagnósticos anónimos de operadores                |
+| `question`              | Preguntas del diagnóstico por dimensión                           |
+| `benchmark_response`    | Encuesta completada de forma anónima (una por sesión)             |
+| `response_answer`       | Respuestas a cada pregunta con score normalizado (0-100)          |
+| `benchmark_result`      | Scores por dimensión, overall y percentil de cada encuesta        |
+| `public_dataset`        | Datos públicos de referencia (20 filas en el seed)                |
+| `rebalance_config`      | Pesos vigentes público/real (fila única)                          |
 
 ### Las 5 dimensiones
 
 | Dimensión | Descripción |
 |-----------|-------------|
-| `visibilidad_cross_layer` | Vista unificada de energía, cooling y workloads |
-| `atribucion_friccion` | Identificación de la interfaz donde se pierde más capacidad |
-| `latencia_coordinacion` | Velocidad de ajuste de cooling y energía ante cambios de workload |
-| `auto_cuantificacion` | Conocimiento de la stranded capacity propia |
-| `bloqueantes` | Obstáculos organizacionales o técnicos que impiden la resolución |
+| `visibility` | Vista unificada de energía, cooling y workloads |
+| `friction` | Identificación de la interfaz donde se pierde más capacidad |
+| `latency` | Velocidad de ajuste de cooling y energía ante cambios de workload |
+| `quantification` | Conocimiento de la stranded capacity propia |
+| `blockers` | Obstáculos organizacionales o técnicos que impiden la resolución |
 
 ### Conexión manual
 
@@ -353,8 +352,8 @@ psql -h localhost -U nlr -d nlr_diagnostic
 ```bash
 psql -U postgres -c "DROP DATABASE IF EXISTS nlr_diagnostic;"
 psql -U postgres -c "CREATE DATABASE nlr_diagnostic OWNER nlr;"
-psql -U nlr -d nlr_diagnostic -f scripts/schema.sql
-python scripts/seed_nlr.py
+psql -U nlr -d nlr_diagnostic -f scripts/schema-v2.sql
+psql -U nlr -d nlr_diagnostic -f scripts/seed-v2.sql
 ```
 
 ---
@@ -379,6 +378,10 @@ Copia `backend/.env.example` a `backend/.env`. Referencia completa:
 | `CORS_ORIGINS`                | `["http://localhost:3000"]` | Orígenes permitidos para CORS    |
 | `PDF_SERVICE_URL`             | `http://localhost:3001`  | URL del microservicio Puppeteer      |
 | `PDF_SERVICE_TIMEOUT_SECONDS` | `30`                     | Timeout para generación de PDF       |
+| `AI_SERVICE_URL`              | `http://localhost:11434` | URL del microservicio de IA (Ollama) |
+| `AI_MODEL`                    | `hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M` | Modelo IA en español |
+| `AI_TIMEOUT_SECONDS`          | `120`                    | Timeout para el análisis IA          |
+| `AI_MAX_TOKENS`               | `512`                    | Límite de tokens del análisis        |
 | `LOG_LEVEL`                   | `INFO`                   | Nivel de logging                     |
 | `LOG_JSON`                    | `false`                  | Logging en formato JSON              |
 
@@ -396,6 +399,33 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+---
+
+## Microservicio de IA (análisis automático)
+
+Genera el `ai_analysis` de cada diagnóstico (Markdown en español: resumen,
+fortalezas, áreas de mejora y recomendaciones) usando un modelo local
+**NeuralQwen-2.5-1.5B-Spanish** (GGUF Q4_K_M, ~1.1 GB) servido por **Ollama**.
+
+- El modelo se descarga una sola vez al primer arranque y queda cacheado en el
+  volumen `aimodels` (compose) o `~/.ollama` (local).
+- Corre en CPU, los datos nunca salen del despliegue.
+- El análisis se genera como `BackgroundTask` tras cada diagnóstico nuevo
+  (no bloquea el POST); si el servicio no está disponible, se loguea y el
+  `ai_analysis` queda `NULL` sin romper el flujo.
+
+Verificar:
+
+```bash
+# health del servicio (Ollama)
+curl http://localhost:11434/api/tags
+
+# generar análisis manualmente
+curl -X POST http://localhost:11434/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{"model":"hf.co/mradermacher/NeuralQwen-2.5-1.5B-Spanish-GGUF:Q4_K_M","prompt":"Resumen en 1 frase.","stream":false}'
 ```
 
 ---
@@ -446,12 +476,15 @@ curl -X POST http://localhost:8000/api/v1/diagnostic \
   -H "Content-Type: application/json" \
   -d '{
     "answers": [
-      {"question_id": "vcl_01", "value": 4},
-      {"question_id": "vcl_02", "value": 5},
-      {"question_id": "af_01", "value": 3}
+      {"question_id": 1, "value": 4},
+      {"question_id": 2, "value": 5},
+      {"question_id": 3, "value": 3}
     ]
   }'
 ```
+
+> Las `question_id` son enteros (SERIAL de la tabla `question`). Usa
+> `GET /benchmark/questions` para obtener los ids vigentes.
 
 ### Benchmark
 
@@ -544,8 +577,9 @@ PYTHONPATH=. uvicorn app.main:app --reload
 ```bash
 docker compose down -v
 docker compose up -d --build
-docker compose --profile seed run --rm seed
 ```
+
+El volumen se recrea vacío y el schema + seed v2 se re-aplican automáticamente al arrancar.
 
 ---
 

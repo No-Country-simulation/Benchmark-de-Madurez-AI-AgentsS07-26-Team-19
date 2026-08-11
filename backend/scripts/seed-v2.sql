@@ -1,7 +1,12 @@
 -- ============================================================
 -- SEED v2 — Benchmark de Madurez AI Agents
--- Uso: docker exec -i nlr-test-db psql -U nlr -d nlr_diagnostic -f /tmp/seed-v2.sql
+-- Uso: psql -U nlr -d nlr_diagnostic -f scripts/seed-v2.sql
+-- Idempotente: re-ejecutar limpia y recarga sin duplicar filas.
 -- ============================================================
+
+BEGIN;
+
+TRUNCATE public_dataset, question RESTART IDENTITY CASCADE;
 
 -- 👁️ VISIBILITY
 INSERT INTO question (dimension, question, description, type, options, weight, order_index, is_active) VALUES
@@ -76,3 +81,5 @@ INSERT INTO public_dataset (source, source_type, visibility_score, friction_scor
 SELECT 'preguntas' AS seccion, COUNT(*)::text AS total FROM question
 UNION ALL
 SELECT 'public_dataset', COUNT(*)::text FROM public_dataset;
+
+COMMIT;

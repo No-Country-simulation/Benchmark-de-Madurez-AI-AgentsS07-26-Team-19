@@ -16,25 +16,30 @@ Idempotencia:
     campo UNIQUE `anonymous_code` de benchmark_response.
 """
 
-import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
+from app.core.dimensions import COLUMN_TO_DIMENSION
+from app.core.logging import get_logger
 from app.core.security import RATE_LIMIT, generate_anon_session_id, limiter
-from app.deps import get_db
+from app.deps import AiClientDep, DbPool
 from app.models.schemas import (
     DiagnosticFrictionProfile,
     DiagnosticResponseV2,
     DiagnosticResult,
     DiagnosticSubmitRequest,
-    Dimension,
     DimensionScore,
     WeightsResponse,
 )
 from app.services import benchmark_engine, idempotency, percentiles, scoring
+from app.services.ai_client import AiClient
 from app.services.idempotency import IdempotencyConflictError
 from app.services.rebalancing import get_current_weights, run_rebalancing
 
+logger = get_logger(__name__)
+
 router = APIRouter(prefix="/diagnostic", tags=["diagnostic"])
+
+_ANON_CODE_MAX_LEN = 32  # benchmark_response.anonymous_code es VARCHAR(32)
 
 
 def _build_friction_profile(dimensions: list[DimensionScore]) -> DiagnosticFrictionProfile:
@@ -70,6 +75,32 @@ def _is_top_quartile(dimension_scores: list[DimensionScore]) -> bool:
     return overall >= 75.0
 
 
+async def _generate_ai_analysis_task(
+    ai_client: AiClient,
+    pool: DbPool,
+    response_id: int,
+    dimension_scores: list[DimensionScore],
+    overall_score: float,
+) -> None:
+    """BackgroundTask: genera el análisis IA y lo persiste.
+
+    Corre fuera del request path para no bloquear la respuesta del POST.
+    Si el servicio IA no está disponible o falla, se loguea y no se rompe
+    el diagnóstico (el ai_analysis queda NULL).
+    """
+    try:
+        scores = {ds.dimension.value: ds.score for ds in dimension_scores}
+        analysis = await ai_client.analyze(scores, overall_score)
+    except Exception as exc:
+        logger.warning(
+            "ai_analysis_failed",
+            response_id=response_id,
+            error=str(exc),
+        )
+        return
+    await benchmark_engine.update_ai_analysis(pool, response_id, analysis)
+
+
 @router.post(
     "",
     response_model=DiagnosticResponseV2,
@@ -86,7 +117,8 @@ async def submit_diagnostic(
     request: Request,
     payload: DiagnosticSubmitRequest,
     background_tasks: BackgroundTasks,
-    pool: asyncpg.Pool = Depends(get_db),
+    pool: DbPool,
+    ai_client: AiClientDep,
 ) -> DiagnosticResponseV2:
     """Procesa una encuesta completa: scoring + percentiles + perfil + persistencia.
 
@@ -98,6 +130,11 @@ async def submit_diagnostic(
     """
     # 1) Sesión anónima (o la que mande el frontend)
     session_id = payload.session_id or generate_anon_session_id()
+    if len(session_id) > _ANON_CODE_MAX_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"session_id must be at most {_ANON_CODE_MAX_LEN} characters",
+        )
     fingerprint = idempotency.compute_answers_fingerprint(payload.answers)
 
     # 2) Preguntas activas → mapa question_id(int) → Dimension
@@ -109,13 +146,22 @@ async def submit_diagnostic(
         payload.answers, question_dimensions
     )
 
-    # 4) Percentiles EN VUELO (mezcla público + real) por dimensión
+    # 4) Pesos vigentes del rebalanceo — los MISMO que se usan para el blend
+    #    de percentiles y que se exponen en `pesos` de la respuesta.
+    weights = await get_current_weights(pool)
+
+    # 5) Percentiles EN VUELO (mezcla público + real) por dimensión
     dimension_map = {ds.dimension.value: ds.score for ds in dimension_scores}
-    percentiles_map = await percentiles.calculate_percentiles_for_user(pool, dimension_map)
+    percentiles_map = await percentiles.calculate_percentiles_for_user(
+        pool,
+        dimension_map,
+        weights.public_weight,
+        weights.real_weight,
+    )
     for ds in dimension_scores:
         ds.percentile = percentiles_map.get(ds.dimension.value, 50.0)
 
-    # 5) Score total (promedio simple de dimensiones)
+    # 6) Score total (promedio simple de dimensiones)
     overall = scoring.compute_overall_score(dimension_scores)
     overall_percentile = round(
         sum(ds.percentile or 0 for ds in dimension_scores) / max(len(dimension_scores), 1),
@@ -139,9 +185,17 @@ async def submit_diagnostic(
             detail=str(exc),
         ) from exc
 
-    # 7) Rebalancear solo para registros nuevos; los replays lo omiten
+    # 7) Rebalancear + análisis IA solo para registros nuevos; los replays lo omiten
     if not outcome.replayed:
         background_tasks.add_task(run_rebalancing, pool)
+        background_tasks.add_task(
+            _generate_ai_analysis_task,
+            ai_client,
+            pool,
+            outcome.diagnostic_id,
+            dimension_scores,
+            overall,
+        )
 
     # 8) Armar la respuesta enriquecida
     result = DiagnosticResult(
@@ -154,7 +208,6 @@ async def submit_diagnostic(
 
     friction = _build_friction_profile(dimension_scores)
     is_top = _is_top_quartile(dimension_scores)
-    weights = await get_current_weights(pool)
 
     message = (
         "Diagnostic replayed from session"
@@ -166,12 +219,7 @@ async def submit_diagnostic(
         diagnostic=result,
         perfil_friccion=friction,
         cuartil_superior=is_top,
-        pesos=WeightsResponse(
-            public_weight=weights["public_weight"],
-            real_weight=weights["real_weight"],
-            real_count=weights["real_count"],
-            updated_at=weights["updated_at"],
-        ),
+        pesos=WeightsResponse.from_state(weights),
         message=message,
     )
 
@@ -185,7 +233,7 @@ async def submit_diagnostic(
 async def get_diagnostic(
     request: Request,
     diagnostic_id: int,
-    pool: asyncpg.Pool = Depends(get_db),
+    pool: DbPool,
 ) -> DiagnosticResult:
     """Obtiene un diagnóstico ya guardado por su id (SERIAL).
 
@@ -199,21 +247,14 @@ async def get_diagnostic(
             detail="Diagnostic not found",
         )
 
-    # Mapeo fijo: columna de BD (sufijo _score) → Dimension corta
-    col_to_dim = {
-        "visibility_score": "visibility",
-        "friction_score": "friction",
-        "latency_score": "latency",
-        "quantification_score": "quantification",
-        "blockers_score": "blockers",
-    }
+    # Mapeo fijo: columna de BD (sufijo _score) → Dimension (fuente unica)
     dimensions = [
         DimensionScore(
-            dimension=Dimension(dim_name),  # str → enum Dimension
+            dimension=dimension,
             score=float(row[column] or 0.0),
             percentile=50.0,  # NOTA FUTURA: v2 no guarda percentile por fila; se recalcula en vuelo
         )
-        for column, dim_name in col_to_dim.items()
+        for column, dimension in COLUMN_TO_DIMENSION.items()
     ]
 
     return DiagnosticResult(

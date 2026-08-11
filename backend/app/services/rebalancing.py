@@ -25,6 +25,9 @@ References:
     - asyncpg transactions: https://magicstack.github.io/asyncpg/current/api/index.html#asyncpg.connection.Connection.transaction
 """
 
+from dataclasses import dataclass
+from datetime import datetime
+
 import asyncpg
 
 from app.core.logging import get_logger
@@ -34,6 +37,20 @@ logger = get_logger(__name__)
 MAX_REAL_WEIGHT: float = 0.80  # public dataset always contributes >= 20 %
 
 CONFIG_ID: int = 1  # rebalance_config is a single-row table (id = 1)
+
+
+@dataclass(frozen=True)
+class WeightsState:
+    """Snapshot of the current public/real blending weights.
+
+    Returned by ``get_current_weights`` so API routers can map it to the
+    ``WeightsResponse`` schema without repeating the field mapping.
+    """
+
+    public_weight: float
+    real_weight: float
+    real_count: int
+    updated_at: datetime | None
 
 
 def compute_weights(real_count: int) -> tuple[float, float]:
@@ -112,7 +129,7 @@ async def run_rebalancing(pool: asyncpg.Pool) -> tuple[float, float]:
     return public_weight, real_weight
 
 
-async def get_current_weights(pool: asyncpg.Pool) -> dict:
+async def get_current_weights(pool: asyncpg.Pool) -> WeightsState:
     """Return the latest rebalancing state.
 
     Falls back to the initial state (all public, 0 real) if no record exists.
@@ -131,10 +148,15 @@ async def get_current_weights(pool: asyncpg.Pool) -> dict:
     )
 
     if row:
-        return {
-            "real_count": real_count,
-            "real_weight": float(row["primary_weight"]),
-            "public_weight": float(row["public_weight"]),
-            "updated_at": row["updated_at"],
-        }
-    return {"real_count": real_count, "real_weight": 0.0, "public_weight": 1.0, "updated_at": None}
+        return WeightsState(
+            real_count=real_count,
+            real_weight=float(row["primary_weight"]),
+            public_weight=float(row["public_weight"]),
+            updated_at=row["updated_at"],
+        )
+    return WeightsState(
+        real_count=real_count,
+        real_weight=0.0,
+        public_weight=1.0,
+        updated_at=None,
+    )
