@@ -66,7 +66,7 @@ La documentación técnica completa vive en [`docs/`](../docs/README.md) (en esp
 
 ## Estructura del proyecto
 
-Repositorio backend-only (el frontend aún no está en este repo):
+Monorepo con backend y frontend (React + Vite + TypeScript).
 
 ```
 .
@@ -116,6 +116,8 @@ Repositorio backend-only (el frontend aún no está en este repo):
 │   ├── business-logic.md        # Scoring, percentiles, rebalanceo, idempotencia
 │   ├── ai-analysis.md           # Servicio de análisis IA
 │   └── deployment.md            # Docker Compose, Supabase, Vercel
+├── frontend/
+│   └── benchmark-frontend/      # Frontend React + Vite + TypeScript (setup #40)
 ├── docker-compose.yml           # Orquestación de servicios
 ├── docker-compose.override.yml  # Override local (dev): puertos + servicio ai
 └── README.md

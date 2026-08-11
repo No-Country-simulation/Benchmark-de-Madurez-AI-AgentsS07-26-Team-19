@@ -46,6 +46,7 @@ idempotente de diagnósticos, análisis IA y generación de reportes PDF.
 │   ├── pyproject.toml
 │   └── .env.example
 ├── docs/                        # Este centro de documentación
+├── frontend/benchmark-frontend/ # Frontend React + Vite + TypeScript (setup #40)
 ├── docker-compose.yml           # Servicios: db + api + puppeteer
 ├── docker-compose.override.yml  # Override de dev local: puertos + servicio ai (Ollama)
 └── README.md
