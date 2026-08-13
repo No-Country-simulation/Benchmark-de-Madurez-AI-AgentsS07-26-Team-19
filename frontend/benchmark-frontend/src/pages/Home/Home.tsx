@@ -1,116 +1,74 @@
-import { ArrowRight, Cpu, Server } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
-
-import { useAiHealth, useApiHealth } from '@/hooks/use-benchmark'
-import { DIMENSION_LABELS, DIMENSIONS } from '@/types/benchmark'
-
-const DIMENSION_DESCRIPTIONS: Record<(typeof DIMENSIONS)[number], string> = {
-  visibility: 'Vista unificada de energía, cooling y workloads.',
-  friction: 'Identificación de la interfaz donde se pierde capacidad.',
-  latency: 'Velocidad de ajuste ante cambios de workload.',
-  quantification: 'Conocimiento de la stranded capacity propia.',
-  blockers: 'Obstáculos organizacionales o técnicos.',
-}
+import { HeroDimensions } from "@/components/home/HeroDimensions";
+import { MaturityLevel } from "@/components/home/MaturityLevel";
+import { ShieldCheck, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
 
 export default function Home() {
-  const apiHealthQuery = useApiHealth()
-  const aiHealthQuery = useAiHealth()
-
   return (
-    <div className="space-y-12">
-      <section className="rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm sm:p-12">
-        <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
-          ¿Qué tan maduro es tu data center?
-        </h1>
-        <p className="mx-auto mt-4 max-w-2xl text-gray-600">
-          Evaluá la madurez de liderazgo de tu operación en 5 dimensiones. Respondé un breve
-          diagnóstico y compará tu resultado contra el benchmark de la población.
-        </p>
-        <Link
-          to="/diagnostic"
-          className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-        >
-          Comenzar diagnóstico
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      </section>
+    <div className="min-h-screen overflow-hidden bg-[#020D1B] text-white">
 
-      <section>
-        <h2 className="mb-4 text-xl font-semibold text-gray-900">Estado del sistema</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <HealthCard
-            icon={<Server className="h-5 w-5" />}
-            title="API"
-            ok={apiHealthQuery.data?.status === 'ok'}
-            loading={apiHealthQuery.isPending}
-            extra={apiHealthQuery.data?.environment}
-          />
-          <HealthCard
-            icon={<Cpu className="h-5 w-5" />}
-            title="Modelo IA"
-            ok={aiHealthQuery.data?.status === 'ok'}
-            loading={aiHealthQuery.isPending}
-          />
+      <section className="px-5 py-8 sm:px-8 sm:py-10 lg:px-16 lg:py-12">
+        <div className="flex w-full flex-col items-center gap-12 pt-4 sm:gap-16 sm:pt-8 lg:flex-row lg:items-center lg:gap-0">
+
+          {/* Hero izquierdo*/}
+          <div className="w-full shrink-0 lg:w-3/5">
+            <div className="flex flex-col gap-5 sm:gap-6">
+
+              <span className="flex w-fit items-center gap-2 rounded-lg border border-cyan-400/50 px-3 py-2.5 text-[10px] font-medium uppercase tracking-[0.15em] text-cyan-400 sm:px-3 sm:py-3 sm:text-[12px] sm:tracking-[0.2em]">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-cyan-400" />
+                Diagnóstico anónimo - 5 min
+              </span>
+
+              <h1 className="text-4xl font-bold leading-[1.05] sm:text-5xl md:text-6xl lg:text-7xl xl:text-8xl">
+                Descubre tu nivel
+                <br />
+                en la industria
+              </h1>
+
+              <p className="max-w-2xl text-base leading-relaxed text-slate-400 sm:text-lg md:text-xl lg:text-2xl">
+                Evalúa la madurez operativa de tu Data Center y compárate
+                con el promedio de la industria.
+              </p>
+
+              <div className="flex flex-col gap-4">
+
+                <Link
+                  to="/diagnostic"
+                  className="flex w-full max-w-sm items-center justify-between gap-6 rounded-md bg-[#25B9E8] px-6 py-3.5 text-lg font-medium text-[#020D1B] transition hover:bg-[#20A9D5] sm:w-fit sm:px-8 sm:py-4 sm:text-xl lg:text-2xl"
+                >
+                  <span>Comenzar</span>
+
+                  <ArrowRight
+                    className="h-5 w-5 translate-y-px sm:h-6 sm:w-6"
+                    strokeWidth={2}
+                  />
+                </Link>
+
+                <div className="flex items-center gap-3 text-sm text-slate-300 sm:text-base">
+                  <ShieldCheck className="h-8 w-6 shrink-0 text-emerald-400 sm:h-10 sm:w-7" />
+
+                  <span>
+                    No solicitamos correos ni nombres
+                  </span>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          {/* Dimensiones */}
+          <div className="flex w-full shrink-0 justify-center lg:w-2/5">
+            <HeroDimensions />
+          </div>
+
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-4 text-xl font-semibold text-gray-900">Las 5 dimensiones</h2>
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {DIMENSIONS.map((dimension) => (
-            <li
-              key={dimension}
-              className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm"
-            >
-              <h3 className="flex items-center gap-2 font-semibold text-gray-900">
-                <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-                {DIMENSION_LABELS[dimension]}
-              </h3>
-              <p className="mt-2 text-sm text-gray-600">{DIMENSION_DESCRIPTIONS[dimension]}</p>
-            </li>
-          ))}
-        </ul>
+      {/* Nivel de madurez */}
+      <section className="px-5 pb-10 sm:px-8 sm:pb-12 lg:px-10 lg:pb-15">
+        <MaturityLevel />
       </section>
-    </div>
-  )
-}
 
-interface HealthCardProps {
-  icon: ReactNode
-  title: string
-  ok: boolean
-  loading: boolean
-  extra?: string
-}
-
-function HealthCard({ icon, title, ok, loading, extra }: HealthCardProps) {
-  const isOk = ok && !loading
-  return (
-    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <span
-        className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-          isOk ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-        }`}
-      >
-        {icon}
-      </span>
-      <div className="flex-1">
-        <p className="text-sm font-semibold text-gray-900">{title}</p>
-        <p className="text-xs text-gray-500">
-          {loading
-            ? 'Verificando…'
-            : isOk
-              ? 'Disponible'
-              : 'No disponible'}
-          {isOk && extra != null ? ` · ${extra}` : ''}
-        </p>
-      </div>
-      <span
-        className={`h-2.5 w-2.5 rounded-full ${
-          loading ? 'animate-pulse bg-gray-300' : isOk ? 'bg-emerald-500' : 'bg-red-500'
-        }`}
-      />
     </div>
-  )
+  );
 }
