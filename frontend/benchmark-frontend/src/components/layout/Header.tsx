@@ -57,7 +57,7 @@ export default function Header() {
         {/* Navegación Desktop */}
         <nav className="hidden items-center gap-1 lg:flex">
           <NavLink to="/" end className={navLinkClass}>
-            Como funciona
+            Cómo funciona
           </NavLink>
 
           <NavLink to="/diagnostic" className={navLinkClass}>
