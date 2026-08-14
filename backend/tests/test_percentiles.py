@@ -40,17 +40,28 @@ def test_fifty_fifty():
     assert len(result) == 55
 
 
+def test_weighted_merge_is_deterministic():
+    """Same inputs → same output on every call (issue #44: was random.sample)."""
+    public_scores = [10, 20, 30, 40, 50, 60, 70, 80]
+    real_scores = [15, 25, 35, 45]
+
+    first = weighted_merge(public_scores, real_scores, 0.6, 0.4)
+    second = weighted_merge(public_scores, real_scores, 0.6, 0.4)
+
+    assert first == second
+
+
 def test_exact_percentile():
-    """Score=30 in [10,20,40,50] → 2 out of 5 are below → 40%"""
+    """Score=30 in [10,20,40,50] → 2 below of 4 → 50% (user NOT counted)."""
     dataset = [10, 20, 40, 50]
     percentile = calculate_percentile(30, dataset)
-    assert percentile == 40.0
+    assert percentile == 50.0
 
 
 def test_percentile_max():
-    """Score higher than all → percentile = 75% (3 of 4 are below)"""
+    """Score higher than all → percentile = 100% (3 of 3 are below)."""
     percentile = calculate_percentile(100, [10, 20, 30])
-    assert percentile == 75.0
+    assert percentile == 100.0
 
 
 def test_percentile_min():
@@ -63,6 +74,18 @@ def test_empty_dataset():
     """Empty dataset → neutral percentile 50%"""
     percentile = calculate_percentile(50, [])
     assert percentile == 50.0
+
+
+def test_single_element_dataset():
+    """Single-element population: best → 100%, worst → 0%.
+
+    Tie (==) counts as NOT below under the strict ``<`` comparison, so an
+    exact match yields 0% — nobody is strictly below you (same convention as
+    test_percentile_max with ties).
+    """
+    assert calculate_percentile(75, [50]) == 100.0
+    assert calculate_percentile(25, [50]) == 0.0
+    assert calculate_percentile(50, [50]) == 0.0
 
 
 def test_compute_thresholds_basic():

@@ -99,19 +99,30 @@ flowchart TD
     C --> C2["SELECT score FROM benchmark_result"]
     C1 --> M["weighted_merge(public, real, w_public, w_real)"]
     C2 --> M
-    M --> S["muestreo: n_public = len(public)*w_public<br/>n_real = len(real)*w_real (random.sample)"]
+    M --> S["muestreo: n_public = len(public)*w_public<br/>n_real = len(real)*w_real (determinista, paso fijo)"]
     S --> P["calculate_percentile(user_score, merged)"]
     P --> R["percentiles[dimension] = valor"]
     R --> B
     B -->|las 5 listas| E(["mapa de percentiles"])
 ```
 
-`calculate_percentile`: el score del usuario se agrega al dataset combinado
-(`all_scores = combined_dataset + [user_score]`), se cuentan los scores
-estrictamente menores a él (`s < user_score`), y se divide por el total de la
-lista (`len(all_scores)` = tamaño del dataset + 1). Devuelve `50.0` si el
+`weighted_merge` (y su helper `_deterministic_sample`) usa **muestreo
+sistemático determinista** — ordena los scores y toma cada N-ésimo elemento —
+en vez de `random.sample`, para que los mismos datos + pesos produzcan siempre
+el mismo blend y por lo tanto el mismo percentil entre requests (issue #44).
+
+`calculate_percentile`: el usuario **no** se agrega a la población de
+referencia (`combined_dataset` solo contiene otros operadores). Se cuentan los
+scores estrictamente menores a él (`s < user_score`) y se divide por el tamaño
+del dataset (`below / len(combined_dataset) * 100`). Devuelve `50.0` si el
 dataset mezclado está vacío. Los umbrales
 (`compute_percentile_thresholds`) por defecto son P10/P25/P50/P75/P90/P99.
+
+El **cuartil superior** del POST (`cuartil_superior` en la respuesta) usa
+`get_overall_percentile()`: blendea `public_dataset.overall_score` con
+`benchmark_result.overall_score` (pesos vigentes) y compara el percentil del
+operador contra el P75 real de la población — ya no contra un umbral fijo de
+score (issue #44).
 
 ---
 

@@ -62,17 +62,27 @@ def _build_friction_profile(dimensions: list[DimensionScore]) -> DiagnosticFrict
     )
 
 
-def _is_top_quartile(dimension_scores: list[DimensionScore]) -> bool:
-    """¿El overall del operador está en el cuartil superior (>= P75)?
+async def _is_top_quartile(
+    pool: DbPool,
+    overall_score: float,
+    weights: object,
+) -> bool:
+    """¿El overall del operador cae en el cuartil superior real (P75+)?
 
-    Se calcula con el promedio de los scores → si >= 75%, se muestra la
-    bandera cuartil_superior = True en la respuesta.
+    Se calcula el percentil del overall score contra la población mezclada
+    (público + real con los pesos vigentes) y se compara contra 75 — el P75
+    ES el cuartil superior por definición (issue #44).
 
-    NOTA para futuro: si queremos usar los percentiles reales por dimensión
-    en vez del promedio simple, el cálculo vive en services/percentiles.py.
+    Antes usaba un umbral fijo ``overall >= 75`` que no reflejaba la
+    distribución real de la población.
     """
-    overall = scoring.compute_overall_score(dimension_scores)
-    return overall >= 75.0
+    overall_percentile = await percentiles.get_overall_percentile(
+        pool,
+        overall_score,
+        weights.public_weight,
+        weights.real_weight,
+    )
+    return overall_percentile >= 75.0
 
 
 async def _generate_ai_analysis_task(
@@ -207,7 +217,7 @@ async def submit_diagnostic(
     )
 
     friction = _build_friction_profile(dimension_scores)
-    is_top = _is_top_quartile(dimension_scores)
+    is_top = await _is_top_quartile(pool, overall, weights)
 
     message = (
         "Diagnostic replayed from session"
@@ -247,12 +257,26 @@ async def get_diagnostic(
             detail="Diagnostic not found",
         )
 
+    # Percentiles EN VUELO contra la población mezclada (igual que el POST),
+    # en vez del valor fijo 50.0 (issue #44).
+    weights = await get_current_weights(pool)
+    scores_map = {
+        dimension.value: float(row[column] or 0.0)
+        for column, dimension in COLUMN_TO_DIMENSION.items()
+    }
+    percentiles_map = await percentiles.calculate_percentiles_for_user(
+        pool,
+        scores_map,
+        weights.public_weight,
+        weights.real_weight,
+    )
+
     # Mapeo fijo: columna de BD (sufijo _score) → Dimension (fuente unica)
     dimensions = [
         DimensionScore(
             dimension=dimension,
             score=float(row[column] or 0.0),
-            percentile=50.0,  # NOTA FUTURA: v2 no guarda percentile por fila; se recalcula en vuelo
+            percentile=percentiles_map.get(dimension.value, 50.0),
         )
         for column, dimension in COLUMN_TO_DIMENSION.items()
     ]

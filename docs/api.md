@@ -87,7 +87,9 @@ slowapi (no el formato FastAPI estándar).
 Notas:
 
 - `perfil_friccion` = la dimensión con menor score (la fricción dominante).
-- `cuartil_superior` = `true` cuando el overall ≥ 75 (cuartil superior).
+- `cuartil_superior` = `true` cuando el **percentil real** del overall contra la
+  población mezclada (público + real con los pesos vigentes) es ≥ P75 — no un
+  umbral de score fijo (issue #44).
 - `pesos` = los **mismos** pesos usados para el blend de percentiles (de `rebalance_config`).
 - `ai_analysis` se completa luego por un `BackgroundTask` (se lee con `GET /diagnostic/{id}`).
 - Los replays devuelven el resultado guardado con `message: "Diagnostic replayed from session"` y sin efectos secundarios.
@@ -115,7 +117,7 @@ Devuelve un `DiagnosticResult`:
 
 | Campo | Notas |
 |---|---|
-| `dimensions[].percentile` | Fijo en `50.0` — v2 no persiste los percentiles por fila en BD. Si necesitás los percentiles actuales para una dimensión específica, usá `POST /benchmark/percentiles/lookup` |
+| `dimensions[].percentile` | Recomputed **en vuelo** contra la población mezclada con los pesos vigentes (issue #44) — mismo cálculo que el POST. No se persisten por fila en BD |
 
 `404` si el id no existe.
 
