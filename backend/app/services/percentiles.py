@@ -13,7 +13,6 @@ Design:
 """
 
 import math
-import random
 
 import asyncpg
 
@@ -25,18 +24,43 @@ from app.models.schemas import Dimension
 # Pure functions (no database) — these never change
 # ---------------------------------------------------------------------------
 
+def _deterministic_sample(scores: list[float], n: int) -> list[float]:
+    """Deterministic sampling of ``n`` values from ``scores``.
+
+    Uses fixed-step (systematic) sampling over the sorted values instead of
+    ``random.sample``, so repeated calls with the same inputs always produce
+    the same sample. This keeps percentile results reproducible between
+    requests (issue #44).
+
+    Args:
+        scores: Source values (may be unsorted; duplicates allowed).
+        n: Number of values to sample (``0 <= n <= len(scores)``).
+
+    Returns:
+        A list of ``n`` values from ``scores`` in ascending order.
+    """
+    if n <= 0:
+        return []
+    if n >= len(scores):
+        return sorted(scores)
+
+    sorted_scores = sorted(scores)
+    step = len(scores) / n
+    return [sorted_scores[int(i * step)] for i in range(n)]
+
+
 def weighted_merge(
     public_scores: list[float],
     real_scores: list[float],
     public_weight: float,
     real_weight: float,
 ) -> list[float]:
-    """Combine two score datasets using weighted sampling without replacement."""
+    """Combine two score datasets using weighted deterministic sampling."""
     n_public = int(len(public_scores) * public_weight)
     n_real = int(len(real_scores) * real_weight)
 
-    sampled_public = random.sample(public_scores, min(n_public, len(public_scores)))
-    sampled_real = random.sample(real_scores, min(n_real, len(real_scores)))
+    sampled_public = _deterministic_sample(public_scores, n_public)
+    sampled_real = _deterministic_sample(real_scores, n_real)
 
     return sampled_public + sampled_real
 
@@ -44,17 +68,19 @@ def weighted_merge(
 def calculate_percentile(user_score: float, combined_dataset: list[float]) -> float:
     """Percentile of user_score within combined_dataset (0–100).
 
-    Formula: (count of values below user_score) / total_values × 100.
+    The user is NOT part of the reference population: ``combined_dataset``
+    holds the scores of other operators only, so we rank the user against
+    them directly (issue #44). "Percentile X" = "better than X% of the
+    population".
+
+    Formula: (count of values below user_score) / n × 100.
     Returns 50.0 if the dataset is empty (neutral).
     """
     if not combined_dataset:
         return 50.0
 
-    all_scores = combined_dataset + [user_score]
-    all_scores.sort()
-
-    below = sum(1 for s in all_scores if s < user_score)
-    return round((below / len(all_scores)) * 100, 1)
+    below = sum(1 for s in combined_dataset if s < user_score)
+    return round((below / len(combined_dataset)) * 100, 1)
 
 
 def compute_percentile_thresholds(
@@ -155,6 +181,22 @@ async def get_percentile(
     column = DIMENSION_SCORE_COLUMN[dimension]
     merged = await _load_blended_scores(pool, column, public_weight, real_weight)
     return calculate_percentile(score, merged)
+
+
+async def get_overall_percentile(
+    pool: asyncpg.Pool,
+    overall_score: float,
+    public_weight: float,
+    real_weight: float,
+) -> float:
+    """Percentile of the operator's OVERALL score against the blended population.
+
+    Used to determine the real top-quartile flag (P75+) instead of a fixed
+    ``>= 75`` threshold (issue #44). Blends ``public_dataset.overall_score``
+    with ``benchmark_result.overall_score`` using the current weights.
+    """
+    merged = await _load_blended_scores(pool, "overall_score", public_weight, real_weight)
+    return calculate_percentile(overall_score, merged)
 
 
 async def get_all_percentiles(

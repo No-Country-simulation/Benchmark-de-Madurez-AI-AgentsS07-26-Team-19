@@ -20,13 +20,13 @@ class _FakePool:
 async def test_get_percentile_merges_public_and_real():
     pool = _FakePool(public=[10, 20, 30, 40], real=[50, 60])
 
-    # 100% public way: user=20 in [10,20,30,40] → 1 low of 5 (incl. user) → 20%
+    # 100% public: user=20 vs [10,20,30,40] → 1 of 4 are below → 25%
     only_public = await get_percentile(pool, Dimension.VISIBILITY, 20, 1.0, 0.0)
-    assert only_public == 20.0
+    assert only_public == 25.0
 
-    # 100% real: user=55 in [50,60] → 1 of 3 below → 33.3
+    # 100% real: user=55 vs [50,60] → 1 of 2 below → 50%
     only_real = await get_percentile(pool, Dimension.VISIBILITY, 55, 0.0, 1.0)
-    assert only_real == 33.3
+    assert only_real == 50.0
 
 
 async def test_get_percentile_empty_dataset_returns_neutral():
