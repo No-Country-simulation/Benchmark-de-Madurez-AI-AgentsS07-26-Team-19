@@ -33,7 +33,7 @@ export default function Home() {
               <div className="flex flex-col gap-4">
 
                 <Link
-                  to="/diagnostic"
+                  to="/methodology"
                   className="flex w-full max-w-sm items-center justify-between gap-6 rounded-md bg-[#25B9E8] px-6 py-3.5 text-lg font-medium text-[#020D1B] transition hover:bg-[#20A9D5] sm:w-fit sm:px-8 sm:py-4 sm:text-xl lg:text-2xl"
                 >
                   <span>Comenzar</span>

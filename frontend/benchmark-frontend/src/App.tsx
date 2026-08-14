@@ -6,6 +6,7 @@ import Layout from '@/components/layout/Layout'
 const Home = lazy(() => import('@/pages/Home/Home'))
 const Diagnostic = lazy(() => import('@/pages/Diagnostic/Diagnostic'))
 const Result = lazy(() => import('@/pages/Results/Result'))
+const Methodology = lazy(() => import('@/pages/Metodology/Methodology'))
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
             <Route path="/diagnostic" element={<Diagnostic />} />
             <Route path="/results/:id" element={<Result />} />
             <Route path="*" element={<NotFound />} />
+            <Route path="/methodology" element={<Methodology />} />
           </Route>
         </Routes>
       </Suspense>
