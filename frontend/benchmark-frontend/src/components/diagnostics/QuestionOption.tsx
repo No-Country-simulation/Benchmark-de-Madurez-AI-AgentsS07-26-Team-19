@@ -15,7 +15,7 @@ export default function QuestionOption({ value, selected, onSelect }: QuestionOp
       className={cnOption(selected)}
     >
       <span>{value}</span>
-      {selected && <CheckIcon className="ml-2 h-4 w-4 text-green-500"/>}
+      {selected && <CheckIcon className="h-4 w-4 shrink-0 text-green-500"/>}
     </button>
   )
 }

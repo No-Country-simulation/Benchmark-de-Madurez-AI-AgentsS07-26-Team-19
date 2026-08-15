@@ -91,7 +91,7 @@ export default function Diagnostic() {
   }
 
   return (
-    <div className="min-h-screen overflow-hidden bg-[#020D1B] text-white">
+    <div className="min-h-screen overflow-x-hidden bg-[#020D1B] text-white">
       <div className="mx-auto w-full px-6 pt-8 lg:px-16">
         <ProgressBar
           answered={answeredCount}

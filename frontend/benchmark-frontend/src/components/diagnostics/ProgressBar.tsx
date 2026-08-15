@@ -32,10 +32,13 @@ export default function ProgressBar({
 
   const totalSteps = dimensions.length + 1
 
-  const currentStep = Math.min(
-    Math.floor((answered / total) * dimensions.length) + 1,
-    totalSteps
-  )
+  const currentStep =
+    total > 0
+      ? Math.min(
+        Math.floor((answered / total) * dimensions.length) + 1,
+        totalSteps
+      )
+      : 1
 
   return (
     <div className="w-full mt-5">
