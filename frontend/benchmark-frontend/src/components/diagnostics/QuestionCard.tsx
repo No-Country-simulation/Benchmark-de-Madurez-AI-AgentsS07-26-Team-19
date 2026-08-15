@@ -1,4 +1,4 @@
-import { DIMENSION_LABELS, type BenchmarkQuestion } from '@/types/benchmark'
+import { type BenchmarkQuestion } from '@/types/benchmark'
 
 import QuestionOption from './QuestionOption'
 
@@ -12,32 +12,28 @@ interface QuestionCardProps {
 
 export default function QuestionCard({ question, value, onChange }: QuestionCardProps) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-          {DIMENSION_LABELS[question.dimension]}
+    <div className="rounded-xl border-2 border-[#1E4458] shadow-sm my-10">
+      <div className="mb-4 flex flex-col justify-between gap-3 p-4">
+        <span className="rounded-md border-2 border-[#1E4458] p-4 py-1 text-md font-medium text-white w-fit">
+          {question.order}
         </span>
-        <span className="text-xs text-gray-400">{question.order}</span>
-      </div>
-
-      <h2 className="mb-6 text-lg font-medium text-gray-900">{question.text}</h2>
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        {SCALE_LABELS.map((label, index) => {
-          const optionValue = index + 1
-          return (
-            <label key={label} className="flex cursor-pointer flex-col items-center gap-2">
-              <QuestionOption
-                value={optionValue}
-                selected={value === optionValue}
-                onSelect={() => onChange(optionValue)}
-              />
-              <span className="text-center text-xs leading-tight text-gray-500">
-                {optionValue} · {label}
-              </span>
-            </label>
-          )
-        })}
+        <div>
+          <h2 className="mb-6 text-xl font-medium text-white text-center">{question.text}</h2>
+          <div className="flex flex-col justify-between gap-4">
+            {SCALE_LABELS.map((label, index) => {
+              const optionValue = index + 1
+              return (
+                <label key={label} className="flex cursor-pointer flex-col items-center gap-2">
+                  <QuestionOption
+                    value={label}
+                    selected={value === optionValue}
+                    onSelect={() => onChange(optionValue)}
+                  />
+                </label>
+              )
+            })}
+          </div>
+        </div>
       </div>
     </div>
   )

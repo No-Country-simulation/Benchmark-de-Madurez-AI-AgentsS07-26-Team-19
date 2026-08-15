@@ -1,5 +1,7 @@
+import {CheckIcon} from "lucide-react"
+
 interface QuestionOptionProps {
-  value: number
+  value: string
   selected: boolean
   onSelect: () => void
 }
@@ -12,16 +14,17 @@ export default function QuestionOption({ value, selected, onSelect }: QuestionOp
       onClick={onSelect}
       className={cnOption(selected)}
     >
-      {value}
+      <span>{value}</span>
+      {selected && <CheckIcon className="h-4 w-4 shrink-0 text-green-500"/>}
     </button>
   )
 }
 
 function cnOption(selected: boolean): string {
   return [
-    'flex h-11 w-11 items-center justify-center rounded-full border text-sm font-semibold transition-colors',
+    'flex h-11 w-full items-center justify-center border-2 text-sm text-white font-semibold transition-colors',
     selected
-      ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
-      : 'border-gray-300 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-600',
+      ? 'border-blue-600 bg-blue-600 shadow-sm'
+      : 'border-[#1E4458] text-gray-700 hover:border-blue-400 hover:text-blue-600',
   ].join(' ')
 }
