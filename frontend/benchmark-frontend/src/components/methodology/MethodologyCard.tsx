@@ -1,3 +1,5 @@
+import type * as React from 'react'
+
 type MethodologyCardProps = {
     number: number
     title: string

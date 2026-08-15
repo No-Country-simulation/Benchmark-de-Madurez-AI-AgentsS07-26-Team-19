@@ -21,7 +21,7 @@ export default function Methodology() {
                     No te pediremos correos ni nombres. Tus datos están seguros.
                 </h3>
             </section>
-            <section className="flex justify-center px-5 pb-10 sm:px-8 lg:px-16">
+            <section className="flex justify-center pb-10 sm:px-8 lg:px-16">
                 <div className="w-full max-w-7xl">
                     <div className="grid grid-cols-1 justify-items-center gap-5 sm:grid-cols-2 lg:grid-cols-5 lg:justify-items-stretch lg:gap-6">
                         <MethodologyCard
@@ -80,7 +80,7 @@ export default function Methodology() {
                             }
                         />
                     </div>
-                    <div className="mx-auto mt-8 flex w-full max-w-xl items-center justify-center rounded-lg border-2 border-slate-700 px-4 py-4 sm:mt-10 sm:px-6">
+                    <div className="mx-auto mt-8 flex w-full max-w-7xl items-center rounded-lg border-2 border-slate-700 py-4 sm:mt-10 sm:px-6">
                         <Clock3
                             className="mr-3 h-9 w-9 shrink-0 text-sky-400 sm:mr-4 sm:h-12 sm:w-12"
                             strokeWidth={1.0}

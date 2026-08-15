@@ -1,3 +1,4 @@
+import type * as React from "react";
 import { Eye, Waves, Clock3, Layers3, TriangleAlert } from "lucide-react";
 
 export function HeroDimensions() {
