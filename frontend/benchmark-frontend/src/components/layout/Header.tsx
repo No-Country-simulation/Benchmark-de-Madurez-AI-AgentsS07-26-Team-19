@@ -68,7 +68,7 @@ export default function Header() {
             Privacidad
           </NavLink>
 
-          <NavLink to="/diagnostic" className={navLinkClass}>
+          <NavLink to="/methodology" className={navLinkClass}>
             Ver metodología
           </NavLink>
         </nav>
@@ -105,7 +105,7 @@ export default function Header() {
             </NavLink>
 
             <NavLink
-              to="/diagnostic"
+              to="/methodology"
               className={navLinkClass}
               onClick={closeMenu}
             >

@@ -1,3 +1,6 @@
+import type * as React from "react";
+import { Eye, Waves, Clock3, Layers3, TriangleAlert } from "lucide-react";
+
 export function HeroDimensions() {
   return (
     <div className="relative h-130 w-full max-w-200 sm:h-140">
@@ -78,7 +81,7 @@ export function HeroDimensions() {
         "
         title="VISIBILIDAD"
         value="72"
-        icon="◉"
+        icon={<Eye className="h-6 w-6" />}
         color="cyan"
       />
 
@@ -91,7 +94,7 @@ export function HeroDimensions() {
         "
         title="FRICCIÓN"
         value="58"
-        icon="≋"
+        icon={<Waves className="h-6 w-6" />}
         color="green"
       />
 
@@ -104,7 +107,7 @@ export function HeroDimensions() {
         "
         title="LATENCIA"
         value="63"
-        icon="◷"
+        icon={<Clock3 className="h-6 w-6" />}
         color="cyan"
       />
 
@@ -117,7 +120,7 @@ export function HeroDimensions() {
         "
         title="CAPACIDAD"
         value="76"
-        icon="▱"
+        icon={<Layers3 className="h-6 w-6" />}
         color="green"
       />
 
@@ -130,7 +133,7 @@ export function HeroDimensions() {
         "
         title="BLOQUEANTES"
         value="41"
-        icon="!"
+        icon={<TriangleAlert className="h-6 w-6" />}
         color="cyan"
       />
     </div>
@@ -141,7 +144,7 @@ type DimensionCardProps = {
   className?: string
   title: string
   value: string
-  icon: string
+  icon: React.ReactNode
   color: "cyan" | "green"
 }
 
