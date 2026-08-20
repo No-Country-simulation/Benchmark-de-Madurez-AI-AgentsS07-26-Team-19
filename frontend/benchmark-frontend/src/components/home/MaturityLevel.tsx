@@ -1,4 +1,5 @@
 import { Circle } from "lucide-react";
+import logoNetwork from "../../assets/logos/logo-network.svg";
 
 export function MaturityLevel() {
   const score = 72;
@@ -12,8 +13,8 @@ export function MaturityLevel() {
         <div>
           <div className="flex items-start gap-4">
             <img
-              src="https://placehold.co/80x80"
-              alt="Placeholder"
+              src={logoNetwork}
+              alt="Logo Data Center Intelligence"
               className="h-16 w-16 shrink-0"
             />
 

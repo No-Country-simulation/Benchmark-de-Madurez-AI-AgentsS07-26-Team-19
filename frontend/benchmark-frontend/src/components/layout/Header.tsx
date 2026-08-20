@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { Menu, X } from "lucide-react";
+import logoMain from "../../assets/logos/logo-main.svg";
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `rounded-lg border px-3 py-2 text-sm font-medium text-white transition-colors ${
@@ -25,8 +26,8 @@ export default function Header() {
           onClick={closeMenu}
         >
           <img
-            src="https://placehold.co/50x50"
-            alt="Placeholder"
+            src={logoMain}
+            alt="DC Benchmark logo"
             className="h-9 w-9 shrink-0 sm:h-10 sm:w-10 lg:h-12.5 lg:w-12.5"
           />
 

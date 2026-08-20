@@ -1,5 +1,6 @@
 import type * as React from "react";
 import { Eye, Waves, Clock3, Layers3, TriangleAlert } from "lucide-react";
+import logoMain from "../../assets/logos/logo-main.svg";
 
 export function HeroDimensions() {
   return (
@@ -61,13 +62,14 @@ export function HeroDimensions() {
         "
       >
         <img
-          src="https://placehold.co/300x300"
-          alt="Placeholder"
+          src={logoMain}
+          alt="Logo DC Benchmark"
           className="
             h-52 w-52 rounded-lg border border-slate-700/80
+            bg-[#06101d]/95 p-4
             shadow-xl
-            sm:h-60 sm:w-60
-            md:h-75 md:w-75
+            sm:h-60 sm:w-60 sm:p-5
+            md:h-75 md:w-75 md:p-6
           "
         />
       </div>
